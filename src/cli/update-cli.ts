@@ -126,7 +126,7 @@ const UPDATE_QUIPS = [
 
 const MAX_LOG_CHARS = 8000;
 const DEFAULT_PACKAGE_NAME = "openclaw";
-const CORE_PACKAGE_NAMES = new Set([DEFAULT_PACKAGE_NAME]);
+const CORE_PACKAGE_NAMES = new Set([DEFAULT_PACKAGE_NAME, "activeclaw"]);
 const CLI_NAME = resolveCliName();
 const OPENCLAW_REPO_URL = "https://github.com/openclaw/openclaw.git";
 
