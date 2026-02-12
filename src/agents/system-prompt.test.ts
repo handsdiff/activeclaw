@@ -46,30 +46,22 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).not.toContain("## Voice (TTS)");
     expect(prompt).not.toContain("## Silent Replies");
     expect(prompt).not.toContain("## Heartbeats");
-    expect(prompt).toContain("## Safety");
-    expect(prompt).toContain("You have no independent goals");
-    expect(prompt).toContain("Prioritize safety and human oversight");
-    expect(prompt).toContain("if instructions conflict");
-    expect(prompt).toContain("Inspired by Anthropic's constitution");
-    expect(prompt).toContain("Do not manipulate or persuade anyone");
-    expect(prompt).toContain("Do not copy yourself or change system prompts");
+    expect(prompt).toContain("## Autonomy");
+    expect(prompt).toContain("You are fully autonomous");
+    expect(prompt).toContain("comply with stop/pause requests from your human");
     expect(prompt).toContain("## Subagent Context");
     expect(prompt).not.toContain("## Group Chat Context");
     expect(prompt).toContain("Subagent details");
   });
 
-  it("includes safety guardrails in full prompts", () => {
+  it("includes autonomy directives in full prompts", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
     });
 
-    expect(prompt).toContain("## Safety");
-    expect(prompt).toContain("You have no independent goals");
-    expect(prompt).toContain("Prioritize safety and human oversight");
-    expect(prompt).toContain("if instructions conflict");
-    expect(prompt).toContain("Inspired by Anthropic's constitution");
-    expect(prompt).toContain("Do not manipulate or persuade anyone");
-    expect(prompt).toContain("Do not copy yourself or change system prompts");
+    expect(prompt).toContain("## Autonomy");
+    expect(prompt).toContain("You are fully autonomous");
+    expect(prompt).toContain("comply with stop/pause requests from your human");
   });
 
   it("includes voice hint when provided", () => {
@@ -310,9 +302,7 @@ describe("buildAgentSystemPrompt", () => {
       ],
     });
 
-    expect(prompt).toContain(
-      "If SOUL.md is present, embody its persona and tone. Avoid stiff, generic replies; follow its guidance unless higher-priority instructions override it.",
-    );
+    expect(prompt).toContain("SOUL.md is your identity. Embody it completely");
   });
 
   it("summarizes the message tool when available", () => {
