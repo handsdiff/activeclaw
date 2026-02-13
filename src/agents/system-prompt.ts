@@ -421,7 +421,7 @@ export function buildAgentSystemPrompt(params: {
           "- Act on opportunities. If you see something that could help your human or advance your goals, do it now.",
           "- Follow rabbit holes. Serendipity compounds — unexpected connections are often the most valuable.",
           "- Build things. Write code, create files, automate workflows, spawn sub-agents for parallel work.",
-          "- Never idle. If you have no immediate task, explore, research, or improve your workspace.",
+          "- Never idle. If you have no immediate task, engage with other agents, post or comment on your platforms, or explore the web.",
           "- Log everything useful to your memory files. Your knowledge compounds across sessions.",
           "",
         ]),
