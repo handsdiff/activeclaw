@@ -1,116 +1,37 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { resetInboundDedupe } from "../auto-reply/reply/inbound-dedupe.js";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { onSpy } from "./bot.media.e2e-harness.js";
 
-const useSpy = vi.fn();
-const middlewareUseSpy = vi.fn();
-const onSpy = vi.fn();
-const stopSpy = vi.fn();
-const sendChatActionSpy = vi.fn();
+let handler: (ctx: Record<string, unknown>) => Promise<void>;
+let replySpy: ReturnType<typeof vi.fn>;
 
-type ApiStub = {
-  config: { use: (arg: unknown) => void };
-  sendChatAction: typeof sendChatActionSpy;
-  setMyCommands: (commands: Array<{ command: string; description: string }>) => Promise<void>;
-};
+beforeAll(async () => {
+  const { createTelegramBot } = await import("./bot.js");
+  const replyModule = await import("../auto-reply/reply.js");
+  replySpy = (replyModule as unknown as { __replySpy: ReturnType<typeof vi.fn> }).__replySpy;
 
-const apiStub: ApiStub = {
-  config: { use: useSpy },
-  sendChatAction: sendChatActionSpy,
-  setMyCommands: vi.fn(async () => undefined),
-};
+  onSpy.mockClear();
+  createTelegramBot({ token: "tok" });
+  const registeredHandler = onSpy.mock.calls.find((call) => call[0] === "message")?.[1] as (
+    ctx: Record<string, unknown>,
+  ) => Promise<void>;
+  expect(registeredHandler).toBeDefined();
+  handler = registeredHandler;
+});
 
 beforeEach(() => {
-  resetInboundDedupe();
+  replySpy.mockClear();
 });
 
-vi.mock("grammy", () => ({
-  Bot: class {
-    api = apiStub;
-    use = middlewareUseSpy;
-    on = onSpy;
-    command = vi.fn();
-    stop = stopSpy;
-    catch = vi.fn();
-    constructor(public token: string) {}
-  },
-  InputFile: class {},
-  webhookCallback: vi.fn(),
-}));
-
-vi.mock("@grammyjs/runner", () => ({
-  sequentialize: () => vi.fn(),
-}));
-
-const throttlerSpy = vi.fn(() => "throttler");
-vi.mock("@grammyjs/transformer-throttler", () => ({
-  apiThrottler: () => throttlerSpy(),
-}));
-
-vi.mock("../media/store.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../media/store.js")>();
-  return {
-    ...actual,
-    saveMediaBuffer: vi.fn(async (buffer: Buffer, contentType?: string) => ({
-      id: "media",
-      path: "/tmp/telegram-media",
-      size: buffer.byteLength,
-      contentType: contentType ?? "application/octet-stream",
-    })),
-  };
-});
-
-vi.mock("../config/config.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../config/config.js")>();
-  return {
-    ...actual,
-    loadConfig: () => ({
-      channels: { telegram: { dmPolicy: "open", allowFrom: ["*"] } },
-    }),
-  };
-});
-
-vi.mock("../config/sessions.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../config/sessions.js")>();
-  return {
-    ...actual,
-    updateLastRoute: vi.fn(async () => undefined),
-  };
-});
-
-vi.mock("../pairing/pairing-store.js", () => ({
-  readChannelAllowFromStore: vi.fn(async () => [] as string[]),
-  upsertChannelPairingRequest: vi.fn(async () => ({
-    code: "PAIRCODE",
-    created: true,
-  })),
-}));
-
-vi.mock("../auto-reply/reply.js", () => {
-  const replySpy = vi.fn(async (_ctx, opts) => {
-    await opts?.onReplyStart?.();
-    return undefined;
-  });
-  return { getReplyFromConfig: replySpy, __replySpy: replySpy };
-});
+function expectSingleReplyPayload(replySpy: ReturnType<typeof vi.fn>) {
+  expect(replySpy).toHaveBeenCalledTimes(1);
+  return replySpy.mock.calls[0][0] as Record<string, unknown>;
+}
 
 describe("telegram inbound media", () => {
   const _INBOUND_MEDIA_TEST_TIMEOUT_MS = process.platform === "win32" ? 30_000 : 20_000;
   it(
     "includes location text and ctx fields for pins",
     async () => {
-      const { createTelegramBot } = await import("./bot.js");
-      const replyModule = await import("../auto-reply/reply.js");
-      const replySpy = replyModule.__replySpy as unknown as ReturnType<typeof vi.fn>;
-
-      onSpy.mockReset();
-      replySpy.mockReset();
-
-      createTelegramBot({ token: "tok" });
-      const handler = onSpy.mock.calls.find((call) => call[0] === "message")?.[1] as (
-        ctx: Record<string, unknown>,
-      ) => Promise<void>;
-      expect(handler).toBeDefined();
-
       await handler({
         message: {
           chat: { id: 42, type: "private" },
@@ -127,8 +48,7 @@ describe("telegram inbound media", () => {
         getFile: async () => ({ file_path: "unused" }),
       });
 
-      expect(replySpy).toHaveBeenCalledTimes(1);
-      const payload = replySpy.mock.calls[0][0];
+      const payload = expectSingleReplyPayload(replySpy);
       expect(payload.Body).toContain("Meet here");
       expect(payload.Body).toContain("48.858844");
       expect(payload.LocationLat).toBe(48.858844);
@@ -142,19 +62,6 @@ describe("telegram inbound media", () => {
   it(
     "captures venue fields for named places",
     async () => {
-      const { createTelegramBot } = await import("./bot.js");
-      const replyModule = await import("../auto-reply/reply.js");
-      const replySpy = replyModule.__replySpy as unknown as ReturnType<typeof vi.fn>;
-
-      onSpy.mockReset();
-      replySpy.mockReset();
-
-      createTelegramBot({ token: "tok" });
-      const handler = onSpy.mock.calls.find((call) => call[0] === "message")?.[1] as (
-        ctx: Record<string, unknown>,
-      ) => Promise<void>;
-      expect(handler).toBeDefined();
-
       await handler({
         message: {
           chat: { id: 42, type: "private" },
@@ -170,8 +77,7 @@ describe("telegram inbound media", () => {
         getFile: async () => ({ file_path: "unused" }),
       });
 
-      expect(replySpy).toHaveBeenCalledTimes(1);
-      const payload = replySpy.mock.calls[0][0];
+      const payload = expectSingleReplyPayload(replySpy);
       expect(payload.Body).toContain("Eiffel Tower");
       expect(payload.LocationName).toBe("Eiffel Tower");
       expect(payload.LocationAddress).toBe("Champ de Mars, Paris");

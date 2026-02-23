@@ -1,30 +1,10 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { withEnv } from "../test-utils/env.js";
+import { writeSkill } from "./skills.e2e-test-helpers.js";
 import { buildWorkspaceSkillsPrompt, syncSkillsToWorkspace } from "./skills.js";
-
-async function writeSkill(params: {
-  dir: string;
-  name: string;
-  description: string;
-  metadata?: string;
-  body?: string;
-}) {
-  const { dir, name, description, metadata, body } = params;
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(
-    path.join(dir, "SKILL.md"),
-    `---
-name: ${name}
-description: ${description}${metadata ? `\nmetadata: ${metadata}` : ""}
----
-
-${body ?? `# ${name}\n`}
-`,
-    "utf-8",
-  );
-}
 
 async function pathExists(filePath: string): Promise<boolean> {
   try {
@@ -35,10 +15,27 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
+let fixtureRoot = "";
+let fixtureCount = 0;
+
+async function createCaseDir(prefix: string): Promise<string> {
+  const dir = path.join(fixtureRoot, `${prefix}-${fixtureCount++}`);
+  await fs.mkdir(dir, { recursive: true });
+  return dir;
+}
+
+beforeAll(async () => {
+  fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-skills-sync-suite-"));
+});
+
+afterAll(async () => {
+  await fs.rm(fixtureRoot, { recursive: true, force: true });
+});
+
 describe("buildWorkspaceSkillsPrompt", () => {
   it("syncs merged skills into a target workspace", async () => {
-    const sourceWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-"));
-    const targetWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-"));
+    const sourceWorkspace = await createCaseDir("source");
+    const targetWorkspace = await createCaseDir("target");
     const extraDir = path.join(sourceWorkspace, ".extra");
     const bundledDir = path.join(sourceWorkspace, ".bundled");
     const managedDir = path.join(sourceWorkspace, ".managed");
@@ -84,9 +81,9 @@ describe("buildWorkspaceSkillsPrompt", () => {
     expect(prompt).toContain(path.join(targetWorkspace, "skills", "demo-skill", "SKILL.md"));
   });
   it("keeps synced skills confined under target workspace when frontmatter name uses traversal", async () => {
-    const sourceWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-"));
-    const targetWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-"));
-    const escapeId = `${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}`;
+    const sourceWorkspace = await createCaseDir("source");
+    const targetWorkspace = await createCaseDir("target");
+    const escapeId = fixtureCount;
     const traversalName = `../../../skill-sync-escape-${escapeId}`;
     const escapedDest = path.resolve(targetWorkspace, "skills", traversalName);
 
@@ -114,9 +111,9 @@ describe("buildWorkspaceSkillsPrompt", () => {
     expect(await pathExists(escapedDest)).toBe(false);
   });
   it("keeps synced skills confined under target workspace when frontmatter name is absolute", async () => {
-    const sourceWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-"));
-    const targetWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-"));
-    const escapeId = `${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}`;
+    const sourceWorkspace = await createCaseDir("source");
+    const targetWorkspace = await createCaseDir("target");
+    const escapeId = fixtureCount;
     const absoluteDest = path.join(os.tmpdir(), `skill-sync-abs-escape-${escapeId}`);
 
     await fs.rm(absoluteDest, { recursive: true, force: true });
@@ -141,21 +138,18 @@ describe("buildWorkspaceSkillsPrompt", () => {
     expect(await pathExists(absoluteDest)).toBe(false);
   });
   it("filters skills based on env/config gates", async () => {
-    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-"));
+    const workspaceDir = await createCaseDir("workspace");
     const skillDir = path.join(workspaceDir, "skills", "nano-banana-pro");
-    const originalEnv = process.env.GEMINI_API_KEY;
-    delete process.env.GEMINI_API_KEY;
+    await writeSkill({
+      dir: skillDir,
+      name: "nano-banana-pro",
+      description: "Generates images",
+      metadata:
+        '{"openclaw":{"requires":{"env":["GEMINI_API_KEY"]},"primaryEnv":"GEMINI_API_KEY"}}',
+      body: "# Nano Banana\n",
+    });
 
-    try {
-      await writeSkill({
-        dir: skillDir,
-        name: "nano-banana-pro",
-        description: "Generates images",
-        metadata:
-          '{"openclaw":{"requires":{"env":["GEMINI_API_KEY"]},"primaryEnv":"GEMINI_API_KEY"}}',
-        body: "# Nano Banana\n",
-      });
-
+    withEnv({ GEMINI_API_KEY: undefined }, () => {
       const missingPrompt = buildWorkspaceSkillsPrompt(workspaceDir, {
         managedSkillsDir: path.join(workspaceDir, ".managed"),
         config: { skills: { entries: { "nano-banana-pro": { apiKey: "" } } } },
@@ -169,16 +163,10 @@ describe("buildWorkspaceSkillsPrompt", () => {
         },
       });
       expect(enabledPrompt).toContain("nano-banana-pro");
-    } finally {
-      if (originalEnv === undefined) {
-        delete process.env.GEMINI_API_KEY;
-      } else {
-        process.env.GEMINI_API_KEY = originalEnv;
-      }
-    }
+    });
   });
   it("applies skill filters, including empty lists", async () => {
-    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-"));
+    const workspaceDir = await createCaseDir("workspace");
     await writeSkill({
       dir: path.join(workspaceDir, "skills", "alpha"),
       name: "alpha",
