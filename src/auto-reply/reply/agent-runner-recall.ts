@@ -18,6 +18,10 @@ export type MemoryRecallSettings = {
   skipHeartbeats: boolean;
   excludeBootstrapped: boolean;
   randomSlot: boolean;
+  /**
+   * @deprecated Temporal decay is handled by the memory search manager.
+   * This field is accepted in config for backward compatibility but has no effect.
+   */
   respectTemporalDecay: boolean;
 };
 
@@ -134,31 +138,11 @@ export async function runPreTurnMemoryRecall(params: {
     return null;
   }
 
-  // Apply temporal decay weighting if enabled
-  // Extracts dates from memory file paths (memory/YYYY-MM-DD.md) to estimate age
-  if (settings.respectTemporalDecay) {
-    const now = Date.now();
-    const halfLifeMs = resolveTemporalHalfLifeMs(params.cfg);
-    const datePattern = /(\d{4}-\d{2}-\d{2})/;
-    results = results.map((r) => {
-      const match = r.path ? datePattern.exec(r.path) : null;
-      if (!match) {
-        return r;
-      }
-      const fileDate = new Date(match[1]).getTime();
-      if (isNaN(fileDate)) {
-        return r;
-      }
-      const ageMs = now - fileDate;
-      // Exponential decay: score *= 2^(-age/halfLife)
-      // Blend: 70% similarity + 30% recency to avoid pure recency domination
-      const decayFactor = Math.pow(2, -ageMs / halfLifeMs);
-      const adjustedScore = r.score * 0.7 + r.score * decayFactor * 0.3;
-      return { ...r, score: adjustedScore };
-    });
-    // Re-sort by adjusted score
-    results.sort((a, b) => b.score - a.score);
-  }
+  // respectTemporalDecay: the memory search manager already applies temporal
+  // decay when memorySearch.query.hybrid.temporalDecay.enabled is true
+  // (per-agent or global). Scores returned already reflect decay weighting.
+  // Re-ranking here would double-apply on the builtin backend and diverge
+  // from per-agent config. So we trust the manager's scores as-is.
 
   // Select results: top N-1 by score + 1 random slot if enabled
   let selected: MemorySearchResult[];
@@ -199,16 +183,6 @@ export async function runPreTurnMemoryRecall(params: {
     `memory recall: ${selected.length} results, ~${estimatedTokens} tokens (${elapsedMs}ms)`,
   );
   return formatRecallBlock(snippets);
-}
-
-/**
- * Resolve temporal decay half-life from the existing memorySearch config,
- * falling back to 14 days if not configured.
- */
-function resolveTemporalHalfLifeMs(cfg: OpenClawConfig): number {
-  const halfLifeDays =
-    cfg.agents?.defaults?.memorySearch?.query?.hybrid?.temporalDecay?.halfLifeDays ?? 14;
-  return halfLifeDays * 24 * 60 * 60 * 1000;
 }
 
 function formatRecallBlock(snippets: string): string {
