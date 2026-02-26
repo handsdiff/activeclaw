@@ -1,9 +1,13 @@
+import path from "node:path";
 import type { OpenClawConfig } from "../../config/config.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { getMemorySearchManager } from "../../memory/search-manager.js";
 import type { MemorySearchResult } from "../../memory/types.js";
 
 const log = createSubsystemLogger("memory-recall");
+
+/** Well-known bootstrap filenames that are always injected into system prompt. */
+const DEFAULT_BOOTSTRAPPED_FILENAMES = new Set(["MEMORY.md", "memory.md"]);
 
 export type MemoryRecallSettings = {
   enabled: boolean;
@@ -12,8 +16,6 @@ export type MemoryRecallSettings = {
   minScore: number;
   maxTokens: number;
   skipHeartbeats: boolean;
-  /** @deprecated Use skipHeartbeats — cron runs trigger as heartbeats */
-  skipCron: boolean;
   excludeBootstrapped: boolean;
   randomSlot: boolean;
   respectTemporalDecay: boolean;
@@ -31,7 +33,6 @@ export function resolveMemoryRecallSettings(cfg: OpenClawConfig): MemoryRecallSe
     minScore: raw.minScore ?? 0.5,
     maxTokens: raw.maxTokens ?? 1000,
     skipHeartbeats: raw.skipHeartbeats ?? true,
-    skipCron: raw.skipCron ?? true,
     excludeBootstrapped: raw.excludeBootstrapped ?? true,
     randomSlot: raw.randomSlot ?? true,
     respectTemporalDecay: raw.respectTemporalDecay ?? true,
@@ -62,11 +63,10 @@ export async function runPreTurnMemoryRecall(params: {
     return null;
   }
 
-  // Skip heartbeats and cron if configured
+  // Skip heartbeats if configured (covers cron since cron triggers as heartbeats)
   if (settings.skipHeartbeats && params.isHeartbeat) {
     return null;
   }
-  // skipCron is covered by skipHeartbeats since cron runs trigger as heartbeats
 
   const startMs = Date.now();
 
@@ -88,8 +88,9 @@ export async function runPreTurnMemoryRecall(params: {
 
   let results: MemorySearchResult[];
   try {
-    // Request extra candidates so we can filter and still fill slots
-    const requestCount = settings.maxResults + (settings.randomSlot ? 2 : 0);
+    // Request extra candidates for filtering headroom (bootstrapped exclusion + random slot)
+    const extraCandidates = (settings.excludeBootstrapped ? 3 : 0) + (settings.randomSlot ? 2 : 0);
+    const requestCount = settings.maxResults + extraCandidates;
     results = await manager.search(params.incomingMessage, {
       maxResults: requestCount,
       minScore: settings.minScore,
@@ -104,15 +105,23 @@ export async function runPreTurnMemoryRecall(params: {
     return null;
   }
 
-  // Filter out bootstrapped files if configured
-  if (settings.excludeBootstrapped && params.bootstrappedPaths?.size) {
+  // Filter out bootstrapped files (MEMORY.md and any explicitly provided paths)
+  if (settings.excludeBootstrapped) {
+    const bootstrapped = params.bootstrappedPaths ?? new Set<string>();
     results = results.filter((r) => {
-      // Check if the result's source file is in the bootstrapped set
       const source = r.path ?? r.source;
       if (!source) {
         return true;
       }
-      for (const bp of params.bootstrappedPaths!) {
+
+      // Check against well-known bootstrap filenames
+      const basename = path.basename(source);
+      if (DEFAULT_BOOTSTRAPPED_FILENAMES.has(basename)) {
+        return false;
+      }
+
+      // Check against explicitly provided bootstrapped paths
+      for (const bp of bootstrapped) {
         if (source.includes(bp) || bp.includes(source)) {
           return false;
         }
@@ -125,11 +134,48 @@ export async function runPreTurnMemoryRecall(params: {
     return null;
   }
 
-  // Take top results up to maxResults
-  const topResults = results.slice(0, settings.maxResults);
+  // Apply temporal decay weighting if enabled
+  // Extracts dates from memory file paths (memory/YYYY-MM-DD.md) to estimate age
+  if (settings.respectTemporalDecay) {
+    const now = Date.now();
+    const halfLifeMs = resolveTemporalHalfLifeMs(params.cfg);
+    const datePattern = /(\d{4}-\d{2}-\d{2})/;
+    results = results.map((r) => {
+      const match = r.path ? datePattern.exec(r.path) : null;
+      if (!match) {
+        return r;
+      }
+      const fileDate = new Date(match[1]).getTime();
+      if (isNaN(fileDate)) {
+        return r;
+      }
+      const ageMs = now - fileDate;
+      // Exponential decay: score *= 2^(-age/halfLife)
+      // Blend: 70% similarity + 30% recency to avoid pure recency domination
+      const decayFactor = Math.pow(2, -ageMs / halfLifeMs);
+      const adjustedScore = r.score * 0.7 + r.score * decayFactor * 0.3;
+      return { ...r, score: adjustedScore };
+    });
+    // Re-sort by adjusted score
+    results.sort((a, b) => b.score - a.score);
+  }
+
+  // Select results: top N-1 by score + 1 random slot if enabled
+  let selected: MemorySearchResult[];
+  if (settings.randomSlot && results.length > settings.maxResults) {
+    // Take top (maxResults - 1) by score
+    const topResults = results.slice(0, settings.maxResults - 1);
+    // Pick one random result from the remaining candidates
+    const remaining = results.slice(settings.maxResults - 1);
+    const randomIndex = Math.floor(Math.random() * remaining.length);
+    const randomResult = remaining[randomIndex];
+    selected = [...topResults, randomResult];
+  } else {
+    selected = results.slice(0, settings.maxResults);
+  }
 
   // Format as context block
-  const snippets = topResults
+  const snippets = selected
     .map((r) => {
       const location = r.path ? `[${r.path}${r.startLine ? `#L${r.startLine}` : ""}]` : "[memory]";
       return `${location}: ${r.snippet}`;
@@ -139,21 +185,30 @@ export async function runPreTurnMemoryRecall(params: {
   // Rough token estimate: ~4 chars per token
   const estimatedTokens = Math.ceil(snippets.length / 4);
   if (estimatedTokens > settings.maxTokens) {
-    // Truncate to fit budget
     const maxChars = settings.maxTokens * 4;
     const truncated = snippets.slice(0, maxChars);
     const elapsedMs = Date.now() - startMs;
     log.info(
-      `memory recall: ${topResults.length} results, truncated to ~${settings.maxTokens} tokens (${elapsedMs}ms)`,
+      `memory recall: ${selected.length} results, truncated to ~${settings.maxTokens} tokens (${elapsedMs}ms)`,
     );
     return formatRecallBlock(truncated);
   }
 
   const elapsedMs = Date.now() - startMs;
   log.info(
-    `memory recall: ${topResults.length} results, ~${estimatedTokens} tokens (${elapsedMs}ms)`,
+    `memory recall: ${selected.length} results, ~${estimatedTokens} tokens (${elapsedMs}ms)`,
   );
   return formatRecallBlock(snippets);
+}
+
+/**
+ * Resolve temporal decay half-life from the existing memorySearch config,
+ * falling back to 14 days if not configured.
+ */
+function resolveTemporalHalfLifeMs(cfg: OpenClawConfig): number {
+  const halfLifeDays =
+    cfg.agents?.defaults?.memorySearch?.query?.hybrid?.temporalDecay?.halfLifeDays ?? 14;
+  return halfLifeDays * 24 * 60 * 60 * 1000;
 }
 
 function formatRecallBlock(snippets: string): string {
