@@ -56,6 +56,21 @@ export const AgentDefaultsSchema = z
     contextTokens: z.number().int().positive().optional(),
     cliBackends: z.record(z.string(), CliBackendSchema).optional(),
     memorySearch: MemorySearchSchema,
+    memoryRecall: z
+      .object({
+        enabled: z.boolean().optional(),
+        minMessageLength: z.number().int().positive().optional(),
+        maxResults: z.number().int().min(1).max(10).optional(),
+        minScore: z.number().min(0).max(1).optional(),
+        maxTokens: z.number().int().positive().optional(),
+        skipHeartbeats: z.boolean().optional(),
+        skipCron: z.boolean().optional(),
+        excludeBootstrapped: z.boolean().optional(),
+        randomSlot: z.boolean().optional(),
+        respectTemporalDecay: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
     contextPruning: z
       .object({
         mode: z.union([z.literal("off"), z.literal("cache-ttl")]).optional(),

@@ -39,6 +39,7 @@ import {
 } from "./agent-runner-helpers.js";
 import { runMemoryFlushIfNeeded } from "./agent-runner-memory.js";
 import { buildReplyPayloads } from "./agent-runner-payloads.js";
+import { runPreTurnMemoryRecall } from "./agent-runner-recall.js";
 import { appendUsageLine, formatResponseUsageLine } from "./agent-runner-utils.js";
 import { createAudioAsVoiceBuffer, createBlockReplyPipeline } from "./block-reply-pipeline.js";
 import { resolveBlockStreamingCoalescing } from "./block-streaming.js";
@@ -258,6 +259,25 @@ export async function runReplyAgent(params: {
     storePath,
     isHeartbeat,
   });
+
+  // Pre-turn memory recall: search memory with incoming message, inject as context
+  {
+    const agentId = sessionKey ? resolveAgentIdFromSessionKey(sessionKey) : undefined;
+    if (agentId) {
+      const recallContext = await runPreTurnMemoryRecall({
+        cfg,
+        agentId,
+        incomingMessage: commandBody,
+        isHeartbeat,
+        sessionKey,
+      });
+      if (recallContext) {
+        followupRun.run.extraSystemPrompt = followupRun.run.extraSystemPrompt
+          ? `${followupRun.run.extraSystemPrompt}\n\n${recallContext}`
+          : recallContext;
+      }
+    }
+  }
 
   const runFollowupTurn = createFollowupRunner({
     opts,

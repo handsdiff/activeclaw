@@ -160,6 +160,19 @@ export type AgentDefaultsConfig = {
   compaction?: AgentCompactionConfig;
   /** Vector memory search configuration (per-agent overrides supported). */
   memorySearch?: MemorySearchConfig;
+  /** Pre-turn memory recall: automatically search memory before each model turn. */
+  memoryRecall?: {
+    enabled?: boolean;
+    minMessageLength?: number;
+    maxResults?: number;
+    minScore?: number;
+    maxTokens?: number;
+    skipHeartbeats?: boolean;
+    skipCron?: boolean;
+    excludeBootstrapped?: boolean;
+    randomSlot?: boolean;
+    respectTemporalDecay?: boolean;
+  };
   /** Default thinking level when no /think directive is present. */
   thinkingDefault?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   /** Default verbose level when no /verbose directive is present. */
