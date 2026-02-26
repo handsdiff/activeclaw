@@ -192,6 +192,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       extraSystemPrompt?: string;
       idempotencyKey: string;
       timeout?: number;
+      bestEffortDeliver?: boolean;
       label?: string;
       spawnedBy?: string;
       inputProvenance?: InputProvenance;
@@ -216,6 +217,8 @@ export const agentHandlers: GatewayRequestHandlers = {
       return;
     }
     const normalizedAttachments = normalizeRpcAttachmentsToChatAttachments(request.attachments);
+    const requestedBestEffortDeliver =
+      typeof request.bestEffortDeliver === "boolean" ? request.bestEffortDeliver : undefined;
 
     let message = (request.message ?? "").trim();
     let images: Array<{ type: "image"; data: string; mimeType: string }> = [];
@@ -310,7 +313,7 @@ export const agentHandlers: GatewayRequestHandlers = {
     }
     let resolvedSessionId = request.sessionId?.trim() || undefined;
     let sessionEntry: SessionEntry | undefined;
-    let bestEffortDeliver = false;
+    let bestEffortDeliver = requestedBestEffortDeliver ?? false;
     let cfgForAgent: ReturnType<typeof loadConfig> | undefined;
     let resolvedSessionKey = requestedSessionKey;
     let skipTimestampInjection = false;
@@ -448,7 +451,9 @@ export const agentHandlers: GatewayRequestHandlers = {
           sessionKey: canonicalSessionKey,
           clientRunId: idem,
         });
-        bestEffortDeliver = true;
+        if (requestedBestEffortDeliver === undefined) {
+          bestEffortDeliver = true;
+        }
       }
       registerAgentRunContext(idem, { sessionKey: canonicalSessionKey });
     }
@@ -482,6 +487,16 @@ export const agentHandlers: GatewayRequestHandlers = {
       typeof request.threadId === "string" && request.threadId.trim()
         ? request.threadId.trim()
         : undefined;
+    const turnSourceChannel =
+      typeof request.channel === "string" && request.channel.trim()
+        ? request.channel.trim()
+        : undefined;
+    const turnSourceTo =
+      typeof request.to === "string" && request.to.trim() ? request.to.trim() : undefined;
+    const turnSourceAccountId =
+      typeof request.accountId === "string" && request.accountId.trim()
+        ? request.accountId.trim()
+        : undefined;
     const deliveryPlan = resolveAgentDeliveryPlan({
       sessionEntry,
       requestedChannel: request.replyChannel ?? request.channel,
@@ -489,6 +504,10 @@ export const agentHandlers: GatewayRequestHandlers = {
       explicitThreadId,
       accountId: request.replyAccountId ?? request.accountId,
       wantsDelivery,
+      turnSourceChannel,
+      turnSourceTo,
+      turnSourceAccountId,
+      turnSourceThreadId: explicitThreadId,
     });
 
     let resolvedChannel = deliveryPlan.resolvedChannel;

@@ -1,11 +1,16 @@
 import {
   GROUP_POLICY_BLOCKED_LABEL,
+  createNormalizedOutboundDeliverer,
   createReplyPrefixOptions,
+  formatTextWithAttachmentLinks,
   logInboundDrop,
+  isDangerousNameMatchingEnabled,
   resolveControlCommandGate,
+  resolveOutboundMediaUrls,
   resolveAllowlistProviderRuntimeGroupPolicy,
   resolveDefaultGroupPolicy,
   warnMissingProviderGroupPolicyFallbackOnce,
+  type OutboundReplyPayload,
   type OpenClawConfig,
   type RuntimeEnv,
 } from "openclaw/plugin-sdk";
@@ -26,32 +31,34 @@ const CHANNEL_ID = "irc" as const;
 
 const escapeIrcRegexLiteral = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+function resolveIrcEffectiveAllowlists(params: {
+  configAllowFrom: string[];
+  configGroupAllowFrom: string[];
+  storeAllowList: string[];
+}): {
+  effectiveAllowFrom: string[];
+  effectiveGroupAllowFrom: string[];
+} {
+  const effectiveAllowFrom = [...params.configAllowFrom, ...params.storeAllowList].filter(Boolean);
+  // Pairing-store entries are DM approvals and must not widen group sender authorization.
+  const effectiveGroupAllowFrom = [...params.configGroupAllowFrom].filter(Boolean);
+  return { effectiveAllowFrom, effectiveGroupAllowFrom };
+}
+
 async function deliverIrcReply(params: {
-  payload: { text?: string; mediaUrls?: string[]; mediaUrl?: string; replyToId?: string };
+  payload: OutboundReplyPayload;
   target: string;
   accountId: string;
   sendReply?: (target: string, text: string, replyToId?: string) => Promise<void>;
   statusSink?: (patch: { lastOutboundAt?: number }) => void;
 }) {
-  const text = params.payload.text ?? "";
-  const mediaList = params.payload.mediaUrls?.length
-    ? params.payload.mediaUrls
-    : params.payload.mediaUrl
-      ? [params.payload.mediaUrl]
-      : [];
-
-  if (!text.trim() && mediaList.length === 0) {
+  const combined = formatTextWithAttachmentLinks(
+    params.payload.text,
+    resolveOutboundMediaUrls(params.payload),
+  );
+  if (!combined) {
     return;
   }
-
-  const mediaBlock = mediaList.length
-    ? mediaList.map((url) => `Attachment: ${url}`).join("\n")
-    : "";
-  const combined = text.trim()
-    ? mediaBlock
-      ? `${text.trim()}\n\n${mediaBlock}`
-      : text.trim()
-    : mediaBlock;
 
   if (params.sendReply) {
     await params.sendReply(params.target, combined, params.payload.replyToId);
@@ -86,6 +93,7 @@ export async function handleIrcInbound(params: {
   const senderDisplay = message.senderHost
     ? `${message.senderNick}!${message.senderUser ?? "?"}@${message.senderHost}`
     : message.senderNick;
+  const allowNameMatching = isDangerousNameMatchingEnabled(account.config);
 
   const dmPolicy = account.config.dmPolicy ?? "pairing";
   const defaultGroupPolicy = resolveDefaultGroupPolicy(config);
@@ -129,8 +137,11 @@ export async function handleIrcInbound(params: {
   const groupAllowFrom =
     directGroupAllowFrom.length > 0 ? directGroupAllowFrom : wildcardGroupAllowFrom;
 
-  const effectiveAllowFrom = [...configAllowFrom, ...storeAllowList].filter(Boolean);
-  const effectiveGroupAllowFrom = [...configGroupAllowFrom, ...storeAllowList].filter(Boolean);
+  const { effectiveAllowFrom, effectiveGroupAllowFrom } = resolveIrcEffectiveAllowlists({
+    configAllowFrom,
+    configGroupAllowFrom,
+    storeAllowList,
+  });
 
   const allowTextCommands = core.channel.commands.shouldHandleTextCommands({
     cfg: config as OpenClawConfig,
@@ -140,6 +151,7 @@ export async function handleIrcInbound(params: {
   const senderAllowedForCommands = resolveIrcAllowlistMatch({
     allowFrom: message.isGroup ? effectiveGroupAllowFrom : effectiveAllowFrom,
     message,
+    allowNameMatching,
   }).allowed;
   const hasControlCommand = core.channel.text.hasControlCommand(rawBody, config as OpenClawConfig);
   const commandGate = resolveControlCommandGate({
@@ -161,6 +173,7 @@ export async function handleIrcInbound(params: {
       message,
       outerAllowFrom: effectiveGroupAllowFrom,
       innerAllowFrom: groupAllowFrom,
+      allowNameMatching,
     });
     if (!senderAllowed) {
       runtime.log?.(`irc: drop group sender ${senderDisplay} (policy=${groupPolicy})`);
@@ -175,6 +188,7 @@ export async function handleIrcInbound(params: {
       const dmAllowed = resolveIrcAllowlistMatch({
         allowFrom: effectiveAllowFrom,
         message,
+        allowNameMatching,
       }).allowed;
       if (!dmAllowed) {
         if (dmPolicy === "pairing") {
@@ -317,26 +331,22 @@ export async function handleIrcInbound(params: {
     channel: CHANNEL_ID,
     accountId: account.accountId,
   });
+  const deliverReply = createNormalizedOutboundDeliverer(async (payload) => {
+    await deliverIrcReply({
+      payload,
+      target: peerId,
+      accountId: account.accountId,
+      sendReply: params.sendReply,
+      statusSink,
+    });
+  });
 
   await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
     ctx: ctxPayload,
     cfg: config as OpenClawConfig,
     dispatcherOptions: {
       ...prefixOptions,
-      deliver: async (payload) => {
-        await deliverIrcReply({
-          payload: payload as {
-            text?: string;
-            mediaUrls?: string[];
-            mediaUrl?: string;
-            replyToId?: string;
-          },
-          target: peerId,
-          accountId: account.accountId,
-          sendReply: params.sendReply,
-          statusSink,
-        });
-      },
+      deliver: deliverReply,
       onError: (err, info) => {
         runtime.error?.(`irc ${info.kind} reply failed: ${String(err)}`);
       },
@@ -351,3 +361,7 @@ export async function handleIrcInbound(params: {
     },
   });
 }
+
+export const __testing = {
+  resolveIrcEffectiveAllowlists,
+};
