@@ -11,10 +11,15 @@ describe("memory hybrid helpers", () => {
   });
 
   it("bm25RankToScore is monotonic and clamped", () => {
-    expect(bm25RankToScore(0)).toBeCloseTo(1);
+    // rank=0 means no relevance signal → low score
+    expect(bm25RankToScore(0)).toBeCloseTo(0);
+    // More negative BM25 rank = better match = higher score
+    expect(bm25RankToScore(-1)).toBeCloseTo(0.5);
+    expect(bm25RankToScore(-10)).toBeGreaterThan(bm25RankToScore(-1));
+    expect(bm25RankToScore(-100)).toBeGreaterThan(0.99);
+    // Positive ranks (shouldn't happen with BM25 but handle gracefully)
     expect(bm25RankToScore(1)).toBeCloseTo(0.5);
-    expect(bm25RankToScore(10)).toBeLessThan(bm25RankToScore(1));
-    expect(bm25RankToScore(-100)).toBeCloseTo(1);
+    expect(bm25RankToScore(10)).toBeGreaterThan(bm25RankToScore(1));
   });
 
   it("mergeHybridResults unions by id and combines weighted scores", async () => {
