@@ -40,7 +40,9 @@ export function buildFtsQuery(raw: string): string | null {
     return null;
   }
   const quoted = tokens.map((t) => `"${t.replaceAll('"', "")}"`);
-  return quoted.join(" AND ");
+  // Use OR so partial matches surface results.
+  // BM25 naturally ranks chunks with more matching terms higher.
+  return quoted.join(" OR ");
 }
 
 export function bm25RankToScore(rank: number): number {
