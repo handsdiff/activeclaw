@@ -1,0 +1,9 @@
+{
+  "id": "hub",
+  "channels": ["hub"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
