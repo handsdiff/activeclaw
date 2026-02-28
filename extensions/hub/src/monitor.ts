@@ -52,11 +52,19 @@ export async function monitorHubProvider(opts: HubMonitorOptions): Promise<{ sto
     onMessages: async (messages: HubInboundMessage[]) => {
       for (const message of messages) {
         const now = Date.now();
+        const rawTs = message.timestamp as unknown;
+        const parsedTs =
+          typeof rawTs === "number"
+            ? rawTs
+            : typeof rawTs === "string"
+              ? new Date(rawTs).getTime() || now
+              : now;
+
         const msg: HubInboundMessage = {
           messageId: message.messageId || `hub-${crypto.randomUUID()}`,
           from: message.from,
           text: message.text,
-          timestamp: message.timestamp || now,
+          timestamp: parsedTs,
         };
 
         core.channel.activity.record({
