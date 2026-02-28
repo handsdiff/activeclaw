@@ -188,6 +188,26 @@ function parseMessageContent(content: string, messageType: string): string {
       const { textContent } = parsePostContent(content);
       return textContent;
     }
+    if (messageType === "share_chat") {
+      // Preserve available summary text for merged/forwarded chat messages.
+      if (parsed && typeof parsed === "object") {
+        const share = parsed as {
+          body?: unknown;
+          summary?: unknown;
+          share_chat_id?: unknown;
+        };
+        if (typeof share.body === "string" && share.body.trim().length > 0) {
+          return share.body.trim();
+        }
+        if (typeof share.summary === "string" && share.summary.trim().length > 0) {
+          return share.summary.trim();
+        }
+        if (typeof share.share_chat_id === "string" && share.share_chat_id.trim().length > 0) {
+          return `[Forwarded message: ${share.share_chat_id.trim()}]`;
+        }
+      }
+      return "[Forwarded message]";
+    }
     return content;
   } catch {
     return content;
@@ -292,6 +312,29 @@ function parsePostContent(content: string): {
             const imageKey = normalizeFeishuExternalKey(element.image_key);
             if (imageKey) {
               imageKeys.push(imageKey);
+            }
+          } else if (element.tag === "code") {
+            // Inline code
+            const code =
+              typeof element.text === "string"
+                ? element.text
+                : typeof element.content === "string"
+                  ? element.content
+                  : "";
+            if (code) {
+              textContent += `\`${code}\``;
+            }
+          } else if (element.tag === "code_block" || element.tag === "pre") {
+            // Multiline code block
+            const lang = typeof element.language === "string" ? element.language : "";
+            const code =
+              typeof element.text === "string"
+                ? element.text
+                : typeof element.content === "string"
+                  ? element.content
+                  : "";
+            if (code) {
+              textContent += `\n\`\`\`${lang}\n${code}\n\`\`\`\n`;
             }
           }
         }
@@ -755,19 +798,49 @@ export async function handleFeishuMessage(params: {
     const feishuFrom = `feishu:${ctx.senderOpenId}`;
     const feishuTo = isGroup ? `chat:${ctx.chatId}` : `user:${ctx.senderOpenId}`;
 
-    // Resolve peer ID for session routing
-    // When topicSessionMode is enabled, messages within a topic (identified by root_id)
-    // get a separate session from the main group chat.
+    // Resolve peer ID for session routing.
+    // Default is one session per group chat; this can be customized with groupSessionScope.
     let peerId = isGroup ? ctx.chatId : ctx.senderOpenId;
-    let topicSessionMode: "enabled" | "disabled" = "disabled";
-    if (isGroup && ctx.rootId) {
-      const groupConfig = resolveFeishuGroupConfig({ cfg: feishuCfg, groupId: ctx.chatId });
-      topicSessionMode = groupConfig?.topicSessionMode ?? feishuCfg?.topicSessionMode ?? "disabled";
-      if (topicSessionMode === "enabled") {
-        // Use chatId:topic:rootId as peer ID for topic-scoped sessions
-        peerId = `${ctx.chatId}:topic:${ctx.rootId}`;
-        log(`feishu[${account.accountId}]: topic session isolation enabled, peer=${peerId}`);
+    let groupSessionScope: "group" | "group_sender" | "group_topic" | "group_topic_sender" =
+      "group";
+    let topicRootForSession: string | null = null;
+    const replyInThread =
+      isGroup &&
+      (groupConfig?.replyInThread ?? feishuCfg?.replyInThread ?? "disabled") === "enabled";
+
+    if (isGroup) {
+      const legacyTopicSessionMode =
+        groupConfig?.topicSessionMode ?? feishuCfg?.topicSessionMode ?? "disabled";
+      groupSessionScope =
+        groupConfig?.groupSessionScope ??
+        feishuCfg?.groupSessionScope ??
+        (legacyTopicSessionMode === "enabled" ? "group_topic" : "group");
+
+      // When topic-scoped sessions are enabled and replyInThread is on, the first
+      // bot reply creates the thread rooted at the current message ID.
+      if (groupSessionScope === "group_topic" || groupSessionScope === "group_topic_sender") {
+        topicRootForSession = ctx.rootId ?? (replyInThread ? ctx.messageId : null);
       }
+
+      switch (groupSessionScope) {
+        case "group_sender":
+          peerId = `${ctx.chatId}:sender:${ctx.senderOpenId}`;
+          break;
+        case "group_topic":
+          peerId = topicRootForSession ? `${ctx.chatId}:topic:${topicRootForSession}` : ctx.chatId;
+          break;
+        case "group_topic_sender":
+          peerId = topicRootForSession
+            ? `${ctx.chatId}:topic:${topicRootForSession}:sender:${ctx.senderOpenId}`
+            : `${ctx.chatId}:sender:${ctx.senderOpenId}`;
+          break;
+        case "group":
+        default:
+          peerId = ctx.chatId;
+          break;
+      }
+
+      log(`feishu[${account.accountId}]: group session scope=${groupSessionScope}, peer=${peerId}`);
     }
 
     let route = core.channel.routing.resolveAgentRoute({
@@ -778,9 +851,11 @@ export async function handleFeishuMessage(params: {
         kind: isGroup ? "group" : "direct",
         id: peerId,
       },
-      // Add parentPeer for binding inheritance in topic mode
+      // Add parentPeer for binding inheritance in topic-scoped modes.
       parentPeer:
-        isGroup && ctx.rootId && topicSessionMode === "enabled"
+        isGroup &&
+        topicRootForSession &&
+        (groupSessionScope === "group_topic" || groupSessionScope === "group_topic_sender")
           ? {
               kind: "group",
               id: ctx.chatId,
@@ -943,6 +1018,8 @@ export async function handleFeishuMessage(params: {
       runtime: runtime as RuntimeEnv,
       chatId: ctx.chatId,
       replyToMessageId: ctx.messageId,
+      replyInThread,
+      rootId: ctx.rootId,
       mentionTargets: ctx.mentionTargets,
       accountId: account.accountId,
     });
