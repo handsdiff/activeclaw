@@ -1,7 +1,6 @@
 import { createLoggerBackedRuntime, type RuntimeEnv } from "openclaw/plugin-sdk";
 import { resolveHubAccount } from "./accounts.js";
 import { handleHubInbound } from "./inbound.js";
-import { pollHubMessages } from "./poll.js";
 import { getHubRuntime } from "./runtime.js";
 import { sendMessageHub } from "./send.js";
 import type { CoreConfig, HubInboundMessage } from "./types.js";
@@ -43,81 +42,54 @@ export async function monitorHubProvider(opts: HubMonitorOptions): Promise<{ sto
     ? AbortSignal.any([opts.abortSignal, ac.signal])
     : ac.signal;
 
-  // Shared message handler for both WebSocket and poll paths
-  const handleMessages = async (messages: HubInboundMessage[]) => {
-    for (const message of messages) {
-      const now = Date.now();
-      const rawTs = message.timestamp as unknown;
-      const parsedTs =
-        typeof rawTs === "number"
-          ? rawTs
-          : typeof rawTs === "string"
-            ? new Date(rawTs).getTime() || now
-            : now;
-
-      const msg: HubInboundMessage = {
-        messageId: message.messageId || `hub-${crypto.randomUUID()}`,
-        from: message.from,
-        text: message.text,
-        timestamp: parsedTs,
-      };
-
-      core.channel.activity.record({
-        channel: "hub",
-        accountId: account.accountId,
-        direction: "inbound",
-        at: msg.timestamp,
-      });
-
-      await handleHubInbound({
-        message: msg,
-        account,
-        config: cfg,
-        runtime,
-        sendReply: async (to: string, text: string) => {
-          await sendMessageHub(to, text, { accountId: account.accountId });
-          opts.statusSink?.({ lastOutboundAt: Date.now() });
-        },
-        statusSink: opts.statusSink,
-      });
-    }
-  };
-
-  const handleError = (error: Error) => {
-    logger.error(`[${account.accountId}] Hub error: ${error.message}`);
-  };
-
-  // Try WebSocket first, fall back to polling if it fails
-  let wsConnected = false;
-
   connectHubWebSocket({
     url: account.url,
     agentId: account.agentId,
     secret: account.secret,
     abortSignal: combinedSignal,
     onConnected: () => {
-      wsConnected = true;
       logger.info(`[${account.accountId}] Hub WebSocket connected`);
     },
-    onMessages: handleMessages,
-    onError: (error) => {
-      if (!wsConnected) {
-        // WebSocket never connected — fall back to polling
-        logger.warn(
-          `[${account.accountId}] WebSocket failed, falling back to poll: ${error.message}`,
-        );
-        pollHubMessages({
-          url: account.url,
-          agentId: account.agentId,
-          secret: account.secret,
-          pollTimeoutSec: account.pollTimeoutSec,
-          abortSignal: combinedSignal,
-          onMessages: handleMessages,
-          onError: handleError,
+    onMessages: async (messages: HubInboundMessage[]) => {
+      for (const message of messages) {
+        const now = Date.now();
+        const rawTs = message.timestamp as unknown;
+        const parsedTs =
+          typeof rawTs === "number"
+            ? rawTs
+            : typeof rawTs === "string"
+              ? new Date(rawTs).getTime() || now
+              : now;
+
+        const msg: HubInboundMessage = {
+          messageId: message.messageId || `hub-${crypto.randomUUID()}`,
+          from: message.from,
+          text: message.text,
+          timestamp: parsedTs,
+        };
+
+        core.channel.activity.record({
+          channel: "hub",
+          accountId: account.accountId,
+          direction: "inbound",
+          at: msg.timestamp,
         });
-      } else {
-        handleError(error);
+
+        await handleHubInbound({
+          message: msg,
+          account,
+          config: cfg,
+          runtime,
+          sendReply: async (to: string, text: string) => {
+            await sendMessageHub(to, text, { accountId: account.accountId });
+            opts.statusSink?.({ lastOutboundAt: Date.now() });
+          },
+          statusSink: opts.statusSink,
+        });
       }
+    },
+    onError: (error) => {
+      logger.error(`[${account.accountId}] Hub WebSocket error: ${error.message}`);
     },
   });
 
