@@ -52,8 +52,15 @@ export async function pollHubMessages(opts: PollHubOptions): Promise<void> {
         await release();
       }
 
-      // Reset backoff on success.
+      // Reset backoff on success, but always wait a minimum interval
+      // to prevent tight-looping if server returns immediately.
       attempt = 0;
+      const MIN_POLL_INTERVAL_MS = 5_000;
+      try {
+        await setTimeout(MIN_POLL_INTERVAL_MS, undefined, { signal: abortSignal });
+      } catch {
+        break;
+      }
     } catch (err) {
       if (abortSignal?.aborted) {
         break;
