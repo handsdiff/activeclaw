@@ -1,10 +1,10 @@
 import { createLoggerBackedRuntime, type RuntimeEnv } from "openclaw/plugin-sdk";
 import { resolveHubAccount } from "./accounts.js";
 import { handleHubInbound } from "./inbound.js";
-import { pollHubMessages } from "./poll.js";
 import { getHubRuntime } from "./runtime.js";
 import { sendMessageHub } from "./send.js";
 import type { CoreConfig, HubInboundMessage } from "./types.js";
+import { connectHubWebSocket } from "./ws.js";
 
 export type HubMonitorOptions = {
   accountId?: string;
@@ -43,11 +43,13 @@ export async function monitorHubProvider(opts: HubMonitorOptions): Promise<{ sto
     : ac.signal;
 
   // Start polling in the background (fire and forget).
-  pollHubMessages({
+  connectHubWebSocket({
     url: account.url,
     agentId: account.agentId,
     secret: account.secret,
-    pollTimeoutSec: account.pollTimeoutSec,
+    onConnected: () => {
+      logger.info(`[${account.accountId}] Hub WebSocket connected`);
+    },
     abortSignal: combinedSignal,
     onMessages: async (messages: HubInboundMessage[]) => {
       for (const message of messages) {
