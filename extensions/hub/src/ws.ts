@@ -27,9 +27,19 @@ export async function connectHubWebSocket(opts: WsHubOptions): Promise<void> {
   const { url, agentId, secret, abortSignal, onMessages, onError, onConnected } = opts;
   let attempt = 0;
 
+  // Initial delay on first attempt to allow Hub server to start
+  if (attempt === 0) {
+    try {
+      await setTimeout(5_000, undefined, { signal: abortSignal });
+    } catch {
+      return;
+    }
+  }
+
   while (!abortSignal?.aborted) {
     try {
       const wsUrl = `${httpToWs(url)}/agents/${encodeURIComponent(agentId)}/ws`;
+      console.error(`[HUB-WS-DEBUG] connecting to ${wsUrl}`);
       const ws = new WebSocket(wsUrl);
 
       await new Promise<void>((resolve, reject) => {

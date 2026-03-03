@@ -42,7 +42,9 @@ export async function monitorHubProvider(opts: HubMonitorOptions): Promise<{ sto
     ? AbortSignal.any([opts.abortSignal, ac.signal])
     : ac.signal;
 
-  connectHubWebSocket({
+  console.error("[HUB-MONITOR-DEBUG] calling connectHubWebSocket");
+  // Block until abort signal — gateway expects startAccount to stay alive
+  const wsPromise = connectHubWebSocket({
     url: account.url,
     agentId: account.agentId,
     secret: account.secret,
@@ -97,9 +99,11 @@ export async function monitorHubProvider(opts: HubMonitorOptions): Promise<{ sto
     `[${account.accountId}] started Hub provider (${account.url}, agent=${account.agentId})`,
   );
 
-  return {
-    stop: () => {
-      ac.abort();
-    },
+  // Return stop handle but keep the promise chain alive
+  // Gateway expects startAccount to stay running — awaiting wsPromise blocks until abort
+  const stopFn = () => {
+    ac.abort();
   };
+  await wsPromise;
+  return { stop: stopFn };
 }
