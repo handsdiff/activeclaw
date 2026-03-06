@@ -1,4 +1,5 @@
 import path from "node:path";
+import { resolveMemorySearchConfig } from "../../agents/memory-search.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { getMemorySearchManager } from "../../memory/search-manager.js";
@@ -8,6 +9,7 @@ const log = createSubsystemLogger("memory-recall");
 
 /** Well-known bootstrap filenames that are always injected into system prompt. */
 const DEFAULT_BOOTSTRAPPED_FILENAMES = new Set(["MEMORY.md", "memory.md"]);
+const MEMORY_LIKE_PATH_SEGMENTS = new Set(["memory", "memory.md"]);
 
 export type MemoryRecallSettings = {
   enabled: boolean;
@@ -73,6 +75,7 @@ export async function runPreTurnMemoryRecall(params: {
   }
 
   const startMs = Date.now();
+  const searchSurfaceLines = buildSearchSurfaceLines(params.cfg, params.agentId);
 
   let managerResult;
   try {
@@ -82,12 +85,24 @@ export async function runPreTurnMemoryRecall(params: {
     });
   } catch (err) {
     log.warn(`memory recall: failed to get manager: ${String(err)}`);
-    return null;
+    return formatRecallBlock({
+      searchSurfaceLines,
+      bodyLines: [
+        `- Auto-recall backend unavailable for this turn: ${formatErrorLine(err)}.`,
+        "- If the answer depends on prior system state, fetch exact evidence before answering and say retrieval was unavailable.",
+      ],
+    });
   }
 
   const { manager } = managerResult;
   if (!manager) {
-    return null;
+    return formatRecallBlock({
+      searchSurfaceLines,
+      bodyLines: [
+        `- Auto-recall backend unavailable for this turn: ${(managerResult.error ?? "memory manager unavailable").trim()}.`,
+        "- If the answer depends on prior system state, fetch exact evidence before answering and say retrieval was unavailable.",
+      ],
+    });
   }
 
   let results: MemorySearchResult[];
@@ -102,11 +117,13 @@ export async function runPreTurnMemoryRecall(params: {
     });
   } catch (err) {
     log.warn(`memory recall: search failed: ${String(err)}`);
-    return null;
-  }
-
-  if (!results.length) {
-    return null;
+    return formatRecallBlock({
+      searchSurfaceLines,
+      bodyLines: [
+        `- Auto-recall search failed for this turn: ${formatErrorLine(err)}.`,
+        "- If the answer depends on prior system state, expand recall manually before answering.",
+      ],
+    });
   }
 
   // Filter out bootstrapped files (MEMORY.md and any explicitly provided paths)
@@ -135,7 +152,15 @@ export async function runPreTurnMemoryRecall(params: {
   }
 
   if (!results.length) {
-    return null;
+    const elapsedMs = Date.now() - startMs;
+    log.info(`memory recall: 0 results (${elapsedMs}ms)`);
+    return formatRecallBlock({
+      searchSurfaceLines,
+      bodyLines: [
+        "- No high-confidence auto-recall hits were selected for this message.",
+        "- If the answer depends on prior work or exact system state, expand recall before answering.",
+      ],
+    });
   }
 
   // respectTemporalDecay: the memory search manager already applies temporal
@@ -144,47 +169,227 @@ export async function runPreTurnMemoryRecall(params: {
   // Re-ranking here would double-apply on the builtin backend and diverge
   // from per-agent config. So we trust the manager's scores as-is.
 
-  // Select results: top N-1 by score + 1 random slot if enabled
-  let selected: MemorySearchResult[];
-  if (settings.randomSlot && results.length > settings.maxResults) {
-    // Take top (maxResults - 1) by score
-    const topResults = results.slice(0, settings.maxResults - 1);
-    // Pick one random result from the remaining candidates
-    const remaining = results.slice(settings.maxResults - 1);
-    const randomIndex = Math.floor(Math.random() * remaining.length);
-    const randomResult = remaining[randomIndex];
-    selected = [...topResults, randomResult];
-  } else {
-    selected = results.slice(0, settings.maxResults);
-  }
-
-  // Format as context block
-  const snippets = selected
-    .map((r) => {
-      const location = r.path ? `[${r.path}${r.startLine ? `#L${r.startLine}` : ""}]` : "[memory]";
-      return `${location}: ${r.snippet}`;
-    })
-    .join("\n\n");
+  const selected = selectRecallResults(results, settings.maxResults, settings.randomSlot);
+  const snippets = selected.map(formatRecallResultLine).join("\n");
 
   // Rough token estimate: ~4 chars per token
   const estimatedTokens = Math.ceil(snippets.length / 4);
+  let bodyLines = snippets ? snippets.split("\n") : [];
   if (estimatedTokens > settings.maxTokens) {
     const maxChars = settings.maxTokens * 4;
     const truncated = snippets.slice(0, maxChars);
+    bodyLines = truncated.split("\n").filter(Boolean);
     const elapsedMs = Date.now() - startMs;
     log.info(
       `memory recall: ${selected.length} results, truncated to ~${settings.maxTokens} tokens (${elapsedMs}ms)`,
     );
-    return formatRecallBlock(truncated);
+    return formatRecallBlock({ searchSurfaceLines, bodyLines });
   }
 
   const elapsedMs = Date.now() - startMs;
   log.info(
     `memory recall: ${selected.length} results, ~${estimatedTokens} tokens (${elapsedMs}ms)`,
   );
-  return formatRecallBlock(snippets);
+  return formatRecallBlock({ searchSurfaceLines, bodyLines });
 }
 
-function formatRecallBlock(snippets: string): string {
-  return `## Auto-recalled from memory\nThe following was automatically retrieved from memory based on the incoming message. Use if relevant, ignore if not.\n\n${snippets}`;
+type RecallBucket = "session" | "cron" | "config" | "log" | "memory" | "workspace" | "other";
+
+function selectRecallResults(
+  results: MemorySearchResult[],
+  maxResults: number,
+  randomSlot: boolean,
+): MemorySearchResult[] {
+  if (results.length <= maxResults) {
+    return results;
+  }
+  const selected: MemorySearchResult[] = [];
+  const selectedKeys = new Set<string>();
+  const selectedBuckets = new Set<RecallBucket>();
+  const deterministicBudget = randomSlot && maxResults > 1 ? maxResults - 1 : maxResults;
+
+  for (const result of results) {
+    if (selected.length >= deterministicBudget) {
+      break;
+    }
+    const bucket = classifyRecallBucket(result.path ?? result.source);
+    const key = recallResultKey(result);
+    if (selectedBuckets.has(bucket) || selectedKeys.has(key)) {
+      continue;
+    }
+    selected.push(result);
+    selectedKeys.add(key);
+    selectedBuckets.add(bucket);
+  }
+
+  for (const result of results) {
+    if (selected.length >= deterministicBudget) {
+      break;
+    }
+    const key = recallResultKey(result);
+    if (selectedKeys.has(key)) {
+      continue;
+    }
+    selected.push(result);
+    selectedKeys.add(key);
+  }
+
+  if (randomSlot && maxResults > 1) {
+    const remaining = results.filter((result) => !selectedKeys.has(recallResultKey(result)));
+    if (remaining.length > 0) {
+      const randomIndex = Math.floor(Math.random() * remaining.length);
+      const randomResult = remaining[randomIndex];
+      if (randomResult) {
+        selected.push(randomResult);
+      }
+    }
+  }
+
+  return selected.slice(0, maxResults);
+}
+
+function recallResultKey(result: MemorySearchResult): string {
+  return `${result.path ?? result.source}:${result.startLine ?? 0}:${result.endLine ?? 0}:${result.snippet}`;
+}
+
+function formatRecallResultLine(result: MemorySearchResult): string {
+  const location = result.path
+    ? `[${result.path}${result.startLine ? `#L${result.startLine}` : ""}]`
+    : "[memory]";
+  const bucketLabel = classifyRecallBucketLabel(result.path ?? result.source);
+  return `- ${bucketLabel}: ${location} ${result.snippet}`;
+}
+
+function classifyRecallBucket(value?: string): RecallBucket {
+  const normalized = (value ?? "").toLowerCase();
+  const basename = path.basename(normalized);
+  if (normalized.startsWith("sessions/")) {
+    return "session";
+  }
+  if (normalized.includes("/cron/") || normalized.includes("\\cron\\")) {
+    return "cron";
+  }
+  if (
+    normalized.includes("/logs/") ||
+    normalized.includes("\\logs\\") ||
+    basename.endsWith(".log")
+  ) {
+    return "log";
+  }
+  if (
+    basename === "openclaw.json" ||
+    basename.endsWith(".yaml") ||
+    basename.endsWith(".yml") ||
+    basename.endsWith(".toml") ||
+    basename.endsWith(".ini")
+  ) {
+    return "config";
+  }
+  if (
+    DEFAULT_BOOTSTRAPPED_FILENAMES.has(path.basename(value ?? "")) ||
+    normalized.split("/").some((segment) => MEMORY_LIKE_PATH_SEGMENTS.has(segment))
+  ) {
+    return "memory";
+  }
+  if (
+    basename.endsWith(".ts") ||
+    basename.endsWith(".tsx") ||
+    basename.endsWith(".js") ||
+    basename.endsWith(".mjs") ||
+    basename.endsWith(".cjs") ||
+    basename.endsWith(".json") ||
+    basename.endsWith(".jsonl") ||
+    basename.endsWith(".md")
+  ) {
+    return "workspace";
+  }
+  return "other";
+}
+
+function classifyRecallBucketLabel(value?: string): string {
+  switch (classifyRecallBucket(value)) {
+    case "session":
+      return "Session";
+    case "cron":
+      return "Cron";
+    case "config":
+      return "Config";
+    case "log":
+      return "Log";
+    case "memory":
+      return "Memory";
+    case "workspace":
+      return "Workspace";
+    default:
+      return "Artifact";
+  }
+}
+
+function buildSearchSurfaceLines(cfg: OpenClawConfig, agentId: string): string[] {
+  const resolved = resolveMemorySearchConfig(cfg, agentId);
+  if (!resolved) {
+    return [
+      "Canonical memory files and any configured operational artifacts when retrieval is enabled.",
+      "Exact filesystem tools remain available for anything outside the injected brief.",
+    ];
+  }
+
+  const lines: string[] = [];
+  if (resolved.sources.includes("memory")) {
+    lines.push(
+      "Canonical memory files plus allowlisted workspace text/code files from configured extra paths.",
+    );
+  }
+  if (resolved.sources.includes("sessions")) {
+    lines.push("Session transcripts included in semantic recall.");
+  }
+
+  const loweredPaths = resolved.extraPaths.map((entry) => entry.toLowerCase());
+  if (loweredPaths.some((entry) => entry.includes("/cron/") || entry.endsWith("/cron"))) {
+    lines.push("Configured cron artifacts.");
+  }
+  if (
+    loweredPaths.some(
+      (entry) =>
+        entry.includes("/logs/") ||
+        entry.endsWith("/logs") ||
+        entry.endsWith(".log") ||
+        entry.endsWith(".jsonl"),
+    )
+  ) {
+    lines.push("Configured operational logs and JSONL artifacts.");
+  }
+  if (
+    loweredPaths.some(
+      (entry) =>
+        entry.endsWith("openclaw.json") ||
+        entry.endsWith("/workspace") ||
+        entry.includes("/workspace/"),
+    )
+  ) {
+    lines.push("Configured workspace/config files.");
+  }
+  lines.push("Exact filesystem search/read tools remain available when the brief is insufficient.");
+  return Array.from(new Set(lines));
+}
+
+function formatRecallBlock(params: { searchSurfaceLines: string[]; bodyLines: string[] }): string {
+  const lines = [
+    "## Operating Brief",
+    "Use this as baseline context for the turn. It is a compact retrieval packet, not the full corpus.",
+    "Indexed operating surface:",
+    ...params.searchSurfaceLines.map((line) => `- ${line}`),
+    "If this brief is insufficient or exact wording/current system state matters, expand recall before answering.",
+    "",
+    "### Auto-recalled signals",
+    ...(params.bodyLines.length > 0
+      ? params.bodyLines
+      : ["- No high-confidence auto-recall hits were selected for this message."]),
+  ];
+  return lines.join("\n");
+}
+
+function formatErrorLine(err: unknown): string {
+  const message = String(err).replace(/\s+/g, " ").trim();
+  return message || "unknown retrieval error";
 }

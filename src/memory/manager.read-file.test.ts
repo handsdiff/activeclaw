@@ -10,6 +10,7 @@ import { getRequiredMemoryIndexManager } from "./test-manager-helpers.js";
 function createMemorySearchCfg(options: {
   workspaceDir: string;
   indexPath: string;
+  extraPaths?: string[];
 }): OpenClawConfig {
   return {
     agents: {
@@ -22,6 +23,7 @@ function createMemorySearchCfg(options: {
           cache: { enabled: false },
           query: { minScore: 0, hybrid: { enabled: false } },
           sync: { watch: false, onSessionStart: false, onSearch: false },
+          extraPaths: options.extraPaths,
         },
       },
       list: [{ id: "main", default: true }],
@@ -120,5 +122,41 @@ describe("MemoryIndexManager.readFile", () => {
     expect(result).toEqual({ text: "", path: relPath });
 
     readSpy.mockRestore();
+  });
+
+  it("rejects non-memory workspace files unless they are in configured extra paths", async () => {
+    const relPath = "src/app.ts";
+    const absPath = path.join(workspaceDir, relPath);
+    await fs.mkdir(path.dirname(absPath), { recursive: true });
+    await fs.writeFile(absPath, "export const ok = true;\n", "utf-8");
+
+    manager = await getRequiredMemoryIndexManager({
+      cfg: createMemorySearchCfg({ workspaceDir, indexPath }),
+      agentId: "main",
+    });
+
+    await expect(manager.readFile({ relPath })).rejects.toThrow("path required");
+  });
+
+  it("redacts sensitive values when reading indexed files from extra paths", async () => {
+    const relPath = "config/openclaw.json";
+    const absPath = path.join(workspaceDir, relPath);
+    const raw = '{"apiKey":"sk-12345678901234567890","ok":true}';
+    await fs.mkdir(path.dirname(absPath), { recursive: true });
+    await fs.writeFile(absPath, raw, "utf-8");
+
+    manager = await getRequiredMemoryIndexManager({
+      cfg: createMemorySearchCfg({
+        workspaceDir,
+        indexPath,
+        extraPaths: [path.join(workspaceDir, "config")],
+      }),
+      agentId: "main",
+    });
+
+    const result = await manager.readFile({ relPath });
+    expect(result.path).toBe(relPath);
+    expect(result.text).toContain('"apiKey"');
+    expect(result.text).not.toContain("sk-12345678901234567890");
   });
 });

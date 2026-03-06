@@ -7,6 +7,7 @@ import {
   chunkMarkdown,
   listMemoryFiles,
   normalizeExtraMemoryPaths,
+  readIndexedTextContent,
   remapChunkLines,
 } from "./internal.js";
 
@@ -46,14 +47,18 @@ describe("listMemoryFiles", () => {
     await fs.mkdir(extraDir, { recursive: true });
     await fs.writeFile(path.join(extraDir, "note1.md"), "# Note 1");
     await fs.writeFile(path.join(extraDir, "note2.md"), "# Note 2");
-    await fs.writeFile(path.join(extraDir, "ignore.txt"), "Not a markdown file");
+    await fs.writeFile(path.join(extraDir, "agent.ts"), "export const ok = true;");
+    await fs.writeFile(path.join(extraDir, "run.jsonl"), '{"ok":true}\n');
+    await fs.writeFile(path.join(extraDir, "ignore.png"), "binary");
 
     const files = await listMemoryFiles(tmpDir, [extraDir]);
-    expect(files).toHaveLength(3);
+    expect(files).toHaveLength(5);
     expect(files.some((file) => file.endsWith("MEMORY.md"))).toBe(true);
     expect(files.some((file) => file.endsWith("note1.md"))).toBe(true);
     expect(files.some((file) => file.endsWith("note2.md"))).toBe(true);
-    expect(files.some((file) => file.endsWith("ignore.txt"))).toBe(false);
+    expect(files.some((file) => file.endsWith("agent.ts"))).toBe(true);
+    expect(files.some((file) => file.endsWith("run.jsonl"))).toBe(true);
+    expect(files.some((file) => file.endsWith("ignore.png"))).toBe(false);
   });
 
   it("includes files from additional paths (single file)", async () => {
@@ -131,6 +136,30 @@ describe("listMemoryFiles", () => {
     const memoryMatches = files.filter((file) => file.endsWith("MEMORY.md"));
     expect(memoryMatches).toHaveLength(1);
   });
+
+  it("skips oversized operational files", async () => {
+    const tmpDir = getTmpDir();
+    await fs.writeFile(path.join(tmpDir, "MEMORY.md"), "# Default memory");
+    const extraDir = path.join(tmpDir, "logs");
+    await fs.mkdir(extraDir, { recursive: true });
+    await fs.writeFile(path.join(extraDir, "current.log"), "x".repeat(300 * 1024));
+
+    const files = await listMemoryFiles(tmpDir, [extraDir]);
+    expect(files.some((file) => file.endsWith("current.log"))).toBe(false);
+  });
+
+  it("skips sensitive env files from additional paths", async () => {
+    const tmpDir = getTmpDir();
+    await fs.writeFile(path.join(tmpDir, "MEMORY.md"), "# Default memory");
+    const extraDir = path.join(tmpDir, "config");
+    await fs.mkdir(extraDir, { recursive: true });
+    await fs.writeFile(path.join(extraDir, ".env"), "OPENAI_API_KEY=sk-secret-token-value");
+    await fs.writeFile(path.join(extraDir, "settings.json"), '{"ok":true}');
+
+    const files = await listMemoryFiles(tmpDir, [extraDir]);
+    expect(files.some((file) => file.endsWith(path.join("config", ".env")))).toBe(false);
+    expect(files.some((file) => file.endsWith(path.join("config", "settings.json")))).toBe(true);
+  });
 });
 
 describe("buildFileEntry", () => {
@@ -153,6 +182,18 @@ describe("buildFileEntry", () => {
     expect(entry).not.toBeNull();
     expect(entry?.path).toBe("note.md");
     expect(entry?.size).toBeGreaterThan(0);
+  });
+
+  it("redacts sensitive tokens when reading indexed text content", async () => {
+    const tmpDir = getTmpDir();
+    const target = path.join(tmpDir, "openclaw.json");
+    const raw = '{"apiKey":"sk-12345678901234567890","ok":true}';
+    await fs.writeFile(target, raw, "utf-8");
+
+    const content = await readIndexedTextContent(target);
+    expect(content).not.toContain(raw);
+    expect(content).toContain('"apiKey"');
+    expect(content).not.toContain("sk-12345678901234567890");
   });
 });
 

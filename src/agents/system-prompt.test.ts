@@ -226,6 +226,25 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("sessions_send");
   });
 
+  it("frames memory as an operating brief plus mandatory drill-down", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["memory_search", "memory_get", "exec"],
+    });
+
+    expect(prompt).toContain("## Memory Recall");
+    expect(prompt).toContain(
+      "Each turn may include an operating brief assembled from the indexed operating corpus.",
+    );
+    expect(prompt).toContain(
+      "The indexed operating corpus can include canonical memory files, session transcripts",
+    );
+    expect(prompt).toContain(
+      "If the injected brief is insufficient, run memory_search and memory_get",
+    );
+    expect(prompt).toContain("exact filesystem search/read tools before answering");
+  });
+
   it("documents ACP sessions_spawn agent targeting requirements", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
@@ -621,16 +640,14 @@ describe("buildAgentSystemPrompt", () => {
       },
     });
 
-    expect(prompt).toContain("Your working directory is: /workspace");
-    expect(prompt).toContain(
-      "For read/write/edit/apply_patch, file paths resolve against host workspace: /tmp/openclaw. For bash/exec commands, use sandbox container paths under /workspace (or relative paths from that workdir), not host paths.",
-    );
     expect(prompt).toContain("Sandbox container workdir: /workspace");
     expect(prompt).toContain(
       "Sandbox host mount source (file tools bridge only; not valid inside sandbox exec): /tmp/sandbox",
     );
+    expect(prompt).toContain("Agent workspace access: ro (mounted at /agent)");
     expect(prompt).toContain("You are running in a sandboxed runtime");
     expect(prompt).toContain("Sub-agents stay sandboxed");
+    expect(prompt).toContain("Elevated exec is available for this session.");
     expect(prompt).toContain("User can toggle with /elevated on|off|ask|full.");
     expect(prompt).toContain("Current elevated level: on");
   });

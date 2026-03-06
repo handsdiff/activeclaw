@@ -29,6 +29,7 @@ import { isFileMissingError } from "./fs-utils.js";
 import {
   buildFileEntry,
   ensureDir,
+  isIndexedTextPath,
   listMemoryFiles,
   normalizeExtraMemoryPaths,
   runWithConcurrency,
@@ -367,7 +368,7 @@ export abstract class MemoryManagerSyncOps {
     const watchPaths = new Set<string>([
       path.join(this.workspaceDir, "MEMORY.md"),
       path.join(this.workspaceDir, "memory.md"),
-      path.join(this.workspaceDir, "memory", "**", "*.md"),
+      path.join(this.workspaceDir, "memory"),
     ]);
     const additionalPaths = normalizeExtraMemoryPaths(this.workspaceDir, this.settings.extraPaths);
     for (const entry of additionalPaths) {
@@ -377,19 +378,46 @@ export abstract class MemoryManagerSyncOps {
           continue;
         }
         if (stat.isDirectory()) {
-          watchPaths.add(path.join(entry, "**", "*.md"));
+          watchPaths.add(entry);
           continue;
         }
-        if (stat.isFile() && entry.toLowerCase().endsWith(".md")) {
+        if (stat.isFile()) {
           watchPaths.add(entry);
         }
       } catch {
         // Skip missing/unreadable additional paths.
       }
     }
+    const watchRoots = new Set(Array.from(watchPaths).map((entry) => path.resolve(entry)));
     this.watcher = chokidar.watch(Array.from(watchPaths), {
       ignoreInitial: true,
-      ignored: (watchPath) => shouldIgnoreMemoryWatchPath(String(watchPath)),
+      ignored: (watchPath, stats) => {
+        const normalized = path.normalize(String(watchPath));
+        const resolved = path.resolve(normalized);
+        if (watchRoots.has(resolved)) {
+          return false;
+        }
+        if (shouldIgnoreMemoryWatchPath(normalized)) {
+          return true;
+        }
+        const stat = (() => {
+          if (stats) {
+            return stats;
+          }
+          try {
+            return fsSync.lstatSync(normalized);
+          } catch {
+            return null;
+          }
+        })();
+        if (stat?.isSymbolicLink?.()) {
+          return true;
+        }
+        if (stat?.isDirectory?.()) {
+          return false;
+        }
+        return !isIndexedTextPath(normalized);
+      },
       awaitWriteFinish: {
         stabilityThreshold: this.settings.sync.watchDebounceMs,
         pollInterval: 100,

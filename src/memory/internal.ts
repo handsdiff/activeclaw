@@ -2,8 +2,55 @@ import crypto from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { redactSensitiveText } from "../logging/redact.js";
 import { runTasksWithConcurrency } from "../utils/run-with-concurrency.js";
 import { isFileMissingError } from "./fs-utils.js";
+
+const INDEXED_TEXT_EXTENSIONS = new Set([
+  ".cjs",
+  ".conf",
+  ".css",
+  ".example",
+  ".hbs",
+  ".html",
+  ".ini",
+  ".js",
+  ".json",
+  ".jsonl",
+  ".log",
+  ".md",
+  ".mjs",
+  ".mts",
+  ".sh",
+  ".sql",
+  ".text",
+  ".toml",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".yaml",
+  ".yml",
+]);
+const INDEXED_TEXT_BASENAMES = new Set(["Dockerfile", "Makefile", "Procfile", "AGENTS"]);
+const SENSITIVE_INDEX_BASENAMES = new Set([".env", ".envrc"]);
+const SKIPPED_INDEX_DIRS = new Set([
+  ".cache",
+  ".git",
+  ".hg",
+  ".idea",
+  ".next",
+  ".nuxt",
+  ".svn",
+  ".turbo",
+  ".vscode",
+  "build",
+  "coverage",
+  "dist",
+  "node_modules",
+  "target",
+  "tmp",
+]);
+const MAX_INDEX_FILE_BYTES = 256 * 1024;
 
 export type MemoryFileEntry = {
   path: string;
@@ -56,6 +103,55 @@ export function isMemoryPath(relPath: string): boolean {
   return normalized.startsWith("memory/");
 }
 
+export function isSensitiveIndexedPath(value: string): boolean {
+  const basename = path.basename(value.trim()).toLowerCase();
+  if (!basename) {
+    return false;
+  }
+  if (basename.startsWith(".env.")) {
+    return true;
+  }
+  return SENSITIVE_INDEX_BASENAMES.has(basename);
+}
+
+export function isIndexedTextPath(value: string): boolean {
+  const basename = path.basename(value.trim());
+  if (!basename) {
+    return false;
+  }
+  if (isSensitiveIndexedPath(basename)) {
+    return false;
+  }
+  if (INDEXED_TEXT_BASENAMES.has(basename)) {
+    return true;
+  }
+  return INDEXED_TEXT_EXTENSIONS.has(path.extname(basename).toLowerCase());
+}
+
+export function sanitizeIndexedTextContent(content: string): string {
+  if (!content) {
+    return content;
+  }
+  return redactSensitiveText(content, { mode: "tools" });
+}
+
+export async function readIndexedTextContent(absPath: string): Promise<string> {
+  const content = await fs.readFile(absPath, "utf-8");
+  return sanitizeIndexedTextContent(content);
+}
+
+async function shouldIncludeIndexedFile(absPath: string): Promise<boolean> {
+  if (!isIndexedTextPath(absPath)) {
+    return false;
+  }
+  try {
+    const stat = await fs.stat(absPath);
+    return stat.isFile() && stat.size <= MAX_INDEX_FILE_BYTES;
+  } catch {
+    return false;
+  }
+}
+
 async function walkDir(dir: string, files: string[]) {
   const entries = await fs.readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
@@ -64,13 +160,16 @@ async function walkDir(dir: string, files: string[]) {
       continue;
     }
     if (entry.isDirectory()) {
+      if (SKIPPED_INDEX_DIRS.has(entry.name)) {
+        continue;
+      }
       await walkDir(full, files);
       continue;
     }
     if (!entry.isFile()) {
       continue;
     }
-    if (!entry.name.endsWith(".md")) {
+    if (!(await shouldIncludeIndexedFile(full))) {
       continue;
     }
     files.push(full);
@@ -92,7 +191,7 @@ export async function listMemoryFiles(
       if (stat.isSymbolicLink() || !stat.isFile()) {
         return;
       }
-      if (!absPath.endsWith(".md")) {
+      if (!isIndexedTextPath(absPath) || stat.size > MAX_INDEX_FILE_BYTES) {
         return;
       }
       result.push(absPath);
@@ -120,7 +219,7 @@ export async function listMemoryFiles(
           await walkDir(inputPath, result);
           continue;
         }
-        if (stat.isFile() && inputPath.endsWith(".md")) {
+        if (stat.isFile() && isIndexedTextPath(inputPath) && stat.size <= MAX_INDEX_FILE_BYTES) {
           result.push(inputPath);
         }
       } catch {}
@@ -153,6 +252,9 @@ export async function buildFileEntry(
   absPath: string,
   workspaceDir: string,
 ): Promise<MemoryFileEntry | null> {
+  if (!isIndexedTextPath(absPath)) {
+    return null;
+  }
   let stat;
   try {
     stat = await fs.stat(absPath);
@@ -162,9 +264,12 @@ export async function buildFileEntry(
     }
     throw err;
   }
+  if (!stat.isFile() || stat.size > MAX_INDEX_FILE_BYTES) {
+    return null;
+  }
   let content: string;
   try {
-    content = await fs.readFile(absPath, "utf-8");
+    content = await readIndexedTextContent(absPath);
   } catch (err) {
     if (isFileMissingError(err)) {
       return null;

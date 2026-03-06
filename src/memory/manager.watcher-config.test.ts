@@ -51,12 +51,14 @@ describe("memory watcher config", () => {
     }
   });
 
-  it("watches markdown globs and ignores dependency directories", async () => {
+  it("watches memory roots and configured operational paths while ignoring non-indexed files", async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-memory-watch-"));
     extraDir = path.join(workspaceDir, "extra");
     await fs.mkdir(path.join(workspaceDir, "memory"), { recursive: true });
     await fs.mkdir(extraDir, { recursive: true });
     await fs.writeFile(path.join(extraDir, "notes.md"), "hello");
+    await fs.writeFile(path.join(workspaceDir, "src.ts"), "export const ok = true;\n");
+    await fs.writeFile(path.join(workspaceDir, "image.png"), "png");
 
     const cfg = {
       agents: {
@@ -91,19 +93,27 @@ describe("memory watcher config", () => {
       expect.arrayContaining([
         path.join(workspaceDir, "MEMORY.md"),
         path.join(workspaceDir, "memory.md"),
-        path.join(workspaceDir, "memory", "**", "*.md"),
-        path.join(extraDir, "**", "*.md"),
+        path.join(workspaceDir, "memory"),
+        extraDir,
       ]),
     );
     expect(options.ignoreInitial).toBe(true);
     expect(options.awaitWriteFinish).toEqual({ stabilityThreshold: 25, pollInterval: 100 });
 
-    const ignored = options.ignored as ((watchPath: string) => boolean) | undefined;
+    const ignored = options.ignored as
+      | ((
+          watchPath: string,
+          stats?: { isDirectory(): boolean; isSymbolicLink(): boolean },
+        ) => boolean)
+      | undefined;
     expect(ignored).toBeTypeOf("function");
     expect(ignored?.(path.join(workspaceDir, "memory", "node_modules", "pkg", "index.md"))).toBe(
       true,
     );
     expect(ignored?.(path.join(workspaceDir, "memory", ".venv", "lib", "python.md"))).toBe(true);
     expect(ignored?.(path.join(workspaceDir, "memory", "project", "notes.md"))).toBe(false);
+    expect(ignored?.(path.join(workspaceDir, "MEMORY.md"))).toBe(false);
+    expect(ignored?.(path.join(extraDir, "notes.md"))).toBe(false);
+    expect(ignored?.(path.join(workspaceDir, "image.png"))).toBe(true);
   });
 });

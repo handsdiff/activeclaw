@@ -47,7 +47,10 @@ function buildMemorySection(params: {
   }
   const lines = [
     "## Memory Recall",
-    "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on MEMORY.md + memory/*.md; then use memory_get to pull only the needed lines. If low confidence after search, say you checked.",
+    "Each turn may include an operating brief assembled from the indexed operating corpus. Treat that brief as baseline context, not as the full corpus.",
+    "The indexed operating corpus can include canonical memory files, session transcripts, configured cron/config/log paths, and allowlisted workspace text/code files.",
+    "Before answering anything about prior work, decisions, dates, people, preferences, todos, system behavior, cron state, logs, config, or code: use the operating brief first, then expand recall if needed.",
+    "If the injected brief is insufficient, run memory_search and memory_get to drill into the indexed corpus; if exact wording or current file contents matter, also use exact filesystem search/read tools before answering.",
   ];
   if (params.citationsMode === "off") {
     lines.push(

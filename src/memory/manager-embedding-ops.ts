@@ -1,4 +1,3 @@
-import fs from "node:fs/promises";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { runGeminiEmbeddingBatches, type GeminiBatchRequest } from "./batch-gemini.js";
 import {
@@ -13,6 +12,7 @@ import {
   chunkMarkdown,
   hashText,
   parseEmbedding,
+  readIndexedTextContent,
   remapChunkLines,
   type MemoryChunk,
   type MemoryFileEntry,
@@ -703,7 +703,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
       return;
     }
 
-    const content = options.content ?? (await fs.readFile(entry.absPath, "utf-8"));
+    const content = options.content ?? (await readIndexedTextContent(entry.absPath));
     const chunks = enforceEmbeddingMaxInputTokens(
       this.provider,
       chunkMarkdown(content, this.settings.chunking).filter(

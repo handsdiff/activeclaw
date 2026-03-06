@@ -19,7 +19,12 @@ import {
 } from "./embeddings.js";
 import { isFileMissingError, statRegularFile } from "./fs-utils.js";
 import { bm25RankToScore, buildFtsQuery, mergeHybridResults } from "./hybrid.js";
-import { isMemoryPath, normalizeExtraMemoryPaths } from "./internal.js";
+import {
+  isIndexedTextPath,
+  isMemoryPath,
+  normalizeExtraMemoryPaths,
+  readIndexedTextContent,
+} from "./internal.js";
 import { MemoryManagerEmbeddingOps } from "./manager-embedding-ops.js";
 import { searchKeyword, searchVector } from "./manager-search.js";
 import { extractKeywords } from "./query-expansion.js";
@@ -570,7 +575,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
             continue;
           }
           if (stat.isFile()) {
-            if (absPath === additionalPath && absPath.endsWith(".md")) {
+            if (absPath === additionalPath && isIndexedTextPath(absPath)) {
               allowedAdditional = true;
               break;
             }
@@ -581,7 +586,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     if (!allowedWorkspace && !allowedAdditional) {
       throw new Error("path required");
     }
-    if (!absPath.endsWith(".md")) {
+    if (!isIndexedTextPath(absPath)) {
       throw new Error("path required");
     }
     const statResult = await statRegularFile(absPath);
@@ -590,7 +595,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     }
     let content: string;
     try {
-      content = await fs.readFile(absPath, "utf-8");
+      content = await readIndexedTextContent(absPath);
     } catch (err) {
       if (isFileMissingError(err)) {
         return { text: "", path: relPath };
