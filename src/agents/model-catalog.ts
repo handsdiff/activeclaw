@@ -33,9 +33,39 @@ const defaultImportPiSdk = () => import("./pi-model-discovery.js");
 let importPiSdk = defaultImportPiSdk;
 
 const CODEX_PROVIDER = "openai-codex";
+const OPENAI_PROVIDER = "openai";
+const OPENAI_GPT52_MODEL_ID = "gpt-5.2";
+const OPENAI_GPT54_MODEL_ID = "gpt-5.4";
+const OPENAI_CODEX_GPT54_MODEL_ID = "gpt-5.4";
 const OPENAI_CODEX_GPT53_MODEL_ID = "gpt-5.3-codex";
 const OPENAI_CODEX_GPT53_SPARK_MODEL_ID = "gpt-5.3-codex-spark";
+const OPENAI_CODEX_TEMPLATE_MODEL_IDS = ["gpt-5.3-codex", "gpt-5.2-codex"] as const;
 const NON_PI_NATIVE_MODEL_PROVIDERS = new Set(["kilocode"]);
+
+function applyOpenAIGpt54Fallback(models: ModelCatalogEntry[]): void {
+  const hasGpt54 = models.some(
+    (entry) =>
+      entry.provider === OPENAI_PROVIDER && entry.id.toLowerCase() === OPENAI_GPT54_MODEL_ID,
+  );
+  if (hasGpt54) {
+    return;
+  }
+
+  const baseModel = models.find(
+    (entry) =>
+      entry.provider === OPENAI_PROVIDER && entry.id.toLowerCase() === OPENAI_GPT52_MODEL_ID,
+  );
+  if (!baseModel) {
+    return;
+  }
+
+  models.push({
+    ...baseModel,
+    id: OPENAI_GPT54_MODEL_ID,
+    name: OPENAI_GPT54_MODEL_ID,
+    reasoning: true,
+  });
+}
 
 function applyOpenAICodexSparkFallback(models: ModelCatalogEntry[]): void {
   const hasSpark = models.some(
@@ -59,6 +89,30 @@ function applyOpenAICodexSparkFallback(models: ModelCatalogEntry[]): void {
     ...baseModel,
     id: OPENAI_CODEX_GPT53_SPARK_MODEL_ID,
     name: OPENAI_CODEX_GPT53_SPARK_MODEL_ID,
+  });
+}
+
+function applyOpenAICodexGpt54Fallback(models: ModelCatalogEntry[]): void {
+  const hasGpt54 = models.some(
+    (entry) =>
+      entry.provider === CODEX_PROVIDER && entry.id.toLowerCase() === OPENAI_CODEX_GPT54_MODEL_ID,
+  );
+  if (hasGpt54) {
+    return;
+  }
+
+  const baseModel = OPENAI_CODEX_TEMPLATE_MODEL_IDS.map((id) =>
+    models.find((entry) => entry.provider === CODEX_PROVIDER && entry.id.toLowerCase() === id),
+  ).find(Boolean);
+  if (!baseModel) {
+    return;
+  }
+
+  models.push({
+    ...baseModel,
+    id: OPENAI_CODEX_GPT54_MODEL_ID,
+    name: OPENAI_CODEX_GPT54_MODEL_ID,
+    reasoning: true,
   });
 }
 
@@ -218,6 +272,8 @@ export async function loadModelCatalog(params?: {
         models.push({ id, name, provider, contextWindow, reasoning, input });
       }
       mergeConfiguredOptInProviderModels({ config: cfg, models });
+      applyOpenAIGpt54Fallback(models);
+      applyOpenAICodexGpt54Fallback(models);
       applyOpenAICodexSparkFallback(models);
 
       if (models.length === 0) {
