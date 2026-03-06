@@ -45,6 +45,11 @@ export function resolveExtraParams(params: {
 
 type CacheRetention = "none" | "short" | "long";
 type OpenAIServiceTier = "auto" | "default" | "flex" | "priority";
+const OPENAI_XHIGH_COMPAT_MODEL_REFS = new Set([
+  "openai/gpt-5.4",
+  "openai/gpt-5.4-pro",
+  "openai-codex/gpt-5.4",
+]);
 type CacheRetentionStreamOptions = Partial<SimpleStreamOptions> & {
   cacheRetention?: CacheRetention;
   openaiWsWarmup?: boolean;
@@ -408,6 +413,40 @@ function createOpenAIDefaultTransportWrapper(baseStreamFn: StreamFn | undefined)
       openaiWsWarmup: typedOptions?.openaiWsWarmup ?? true,
     } as SimpleStreamOptions;
     return underlying(model, context, mergedOptions);
+  };
+}
+
+function needsOpenAIXHighPayloadCompat(provider: string, modelId: string): boolean {
+  return OPENAI_XHIGH_COMPAT_MODEL_REFS.has(`${provider.toLowerCase()}/${modelId.toLowerCase()}`);
+}
+
+function createOpenAIXHighPayloadCompatWrapper(baseStreamFn: StreamFn | undefined): StreamFn {
+  const underlying = baseStreamFn ?? streamSimple;
+  return (model, context, options) => {
+    if (
+      typeof model.provider !== "string" ||
+      typeof model.id !== "string" ||
+      !needsOpenAIXHighPayloadCompat(model.provider, model.id)
+    ) {
+      return underlying(model, context, options);
+    }
+
+    const originalOnPayload = options?.onPayload;
+    return underlying(model, context, {
+      ...options,
+      onPayload: (payload) => {
+        if (payload && typeof payload === "object") {
+          const payloadObj = payload as Record<string, unknown>;
+          const reasoning = payloadObj.reasoning;
+          if (reasoning && typeof reasoning === "object" && !Array.isArray(reasoning)) {
+            (reasoning as Record<string, unknown>).effort = "xhigh";
+          } else {
+            payloadObj.reasoning = { effort: "xhigh" };
+          }
+        }
+        originalOnPayload?.(payload);
+      },
+    });
   };
 }
 
@@ -1153,4 +1192,10 @@ export function applyExtraParamsToAgent(
   // Force `store=true` for direct OpenAI Responses models and auto-enable
   // server-side compaction for compatible OpenAI Responses payloads.
   agent.streamFn = createOpenAIResponsesContextManagementWrapper(agent.streamFn, merged);
+
+  if (thinkingLevel === "xhigh" && needsOpenAIXHighPayloadCompat(provider, modelId)) {
+    // pi-ai 0.55.3 still downgrades GPT-5.4 xhigh requests to "high".
+    // Restore the intended payload at the last OpenClaw-owned hook.
+    agent.streamFn = createOpenAIXHighPayloadCompatWrapper(agent.streamFn);
+  }
 }

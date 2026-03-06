@@ -170,6 +170,7 @@ describe("applyExtraParamsToAgent", () => {
       | Model<"openai-codex-responses">
       | Model<"openai-completions">;
     options?: SimpleStreamOptions;
+    thinkingLevel?: Parameters<typeof applyExtraParamsToAgent>[5];
     cfg?: Record<string, unknown>;
     payload?: Record<string, unknown>;
   }) {
@@ -184,6 +185,8 @@ describe("applyExtraParamsToAgent", () => {
       params.cfg as Parameters<typeof applyExtraParamsToAgent>[1],
       params.applyProvider,
       params.applyModelId,
+      undefined,
+      params.thinkingLevel,
     );
     const context: Context = { messages: [] };
     void agent.streamFn?.(params.model, context, params.options ?? {});
@@ -1211,6 +1214,72 @@ describe("applyExtraParamsToAgent", () => {
       } as unknown as Model<"openai-responses">,
     });
     expect(payload.service_tier).toBe("priority");
+  });
+
+  it("restores xhigh reasoning for openai gpt-5.4 payloads", () => {
+    const payload = runResponsesPayloadMutationCase({
+      applyProvider: "openai",
+      applyModelId: "gpt-5.4",
+      thinkingLevel: "xhigh",
+      model: {
+        api: "openai-responses",
+        provider: "openai",
+        id: "gpt-5.4",
+        baseUrl: "https://api.openai.com/v1",
+      } as unknown as Model<"openai-responses">,
+      payload: {
+        store: false,
+        reasoning: {
+          effort: "high",
+          summary: "auto",
+        },
+      },
+    });
+    expect(payload.reasoning).toEqual({ effort: "xhigh", summary: "auto" });
+  });
+
+  it("restores xhigh reasoning for openai gpt-5.4-pro payloads", () => {
+    const payload = runResponsesPayloadMutationCase({
+      applyProvider: "openai",
+      applyModelId: "gpt-5.4-pro",
+      thinkingLevel: "xhigh",
+      model: {
+        api: "openai-responses",
+        provider: "openai",
+        id: "gpt-5.4-pro",
+        baseUrl: "https://api.openai.com/v1",
+      } as unknown as Model<"openai-responses">,
+      payload: {
+        store: false,
+        reasoning: {
+          effort: "high",
+          summary: "auto",
+        },
+      },
+    });
+    expect(payload.reasoning).toEqual({ effort: "xhigh", summary: "auto" });
+  });
+
+  it("restores xhigh reasoning for openai-codex gpt-5.4 payloads", () => {
+    const payload = runResponsesPayloadMutationCase({
+      applyProvider: "openai-codex",
+      applyModelId: "gpt-5.4",
+      thinkingLevel: "xhigh",
+      model: {
+        api: "openai-codex-responses",
+        provider: "openai-codex",
+        id: "gpt-5.4",
+        baseUrl: "https://chatgpt.com/backend-api/codex/responses",
+      } as unknown as Model<"openai-codex-responses">,
+      payload: {
+        store: false,
+        reasoning: {
+          effort: "high",
+          summary: "auto",
+        },
+      },
+    });
+    expect(payload.reasoning).toEqual({ effort: "xhigh", summary: "auto" });
   });
 
   it("preserves caller-provided service_tier values", () => {
