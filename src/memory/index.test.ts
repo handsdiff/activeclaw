@@ -117,6 +117,7 @@ describe("memory index", () => {
   function createCfg(params: {
     storePath: string;
     extraPaths?: string[];
+    excludePaths?: string[];
     sources?: Array<"memory" | "sessions">;
     sessionMemory?: boolean;
     model?: string;
@@ -142,6 +143,7 @@ describe("memory index", () => {
             },
             cache: params.cacheEnabled ? { enabled: true } : undefined,
             extraPaths: params.extraPaths,
+            excludePaths: params.excludePaths,
             sources: params.sources,
             experimental: { sessionMemory: params.sessionMemory ?? false },
           },
@@ -214,6 +216,34 @@ describe("memory index", () => {
           chunks: status.chunks,
         }),
       ]),
+    );
+  });
+
+  it("skips excluded subtrees when indexing a broad workspace path", async () => {
+    const includedDir = path.join(workspaceDir, "hub-data");
+    const excludedDir = path.join(workspaceDir, "activeclaw");
+    await fs.mkdir(includedDir, { recursive: true });
+    await fs.mkdir(excludedDir, { recursive: true });
+    await fs.writeFile(path.join(includedDir, "events.jsonl"), '{"topic":"beta include-me"}\n');
+    await fs.writeFile(path.join(excludedDir, "README.md"), "alpha exclude-me");
+
+    const cfg = createCfg({
+      storePath: path.join(workspaceDir, "index-exclude.sqlite"),
+      extraPaths: [workspaceDir],
+      excludePaths: ["activeclaw"],
+      hybrid: { enabled: false },
+    });
+    const manager = await getPersistentManager(cfg);
+    await manager.sync({ reason: "test" });
+
+    const includedResults = await manager.search("beta");
+    expect(includedResults.some((result) => result.path.includes("hub-data/events.jsonl"))).toBe(
+      true,
+    );
+
+    const excludedResults = await manager.search("alpha");
+    expect(excludedResults.some((result) => result.path.includes("activeclaw/README.md"))).toBe(
+      false,
     );
   });
 

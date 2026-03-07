@@ -131,6 +131,29 @@ describe("memory search config", () => {
     expect(resolved?.extraPaths).toEqual(["/shared/notes", "docs", "../team-notes"]);
   });
 
+  it("merges excluded memory paths from defaults and overrides", () => {
+    const cfg = asConfig({
+      agents: {
+        defaults: {
+          memorySearch: {
+            excludePaths: ["activeclaw", " foundations "],
+          },
+        },
+        list: [
+          {
+            id: "main",
+            default: true,
+            memorySearch: {
+              excludePaths: ["activeclaw", "/shared/archives"],
+            },
+          },
+        ],
+      },
+    });
+    const resolved = resolveMemorySearchConfig(cfg, "main");
+    expect(resolved?.excludePaths).toEqual(["activeclaw", "foundations", "/shared/archives"]);
+  });
+
   it("includes batch defaults for openai without remote overrides", () => {
     const cfg = configWithDefaultProvider("openai");
     const resolved = resolveMemorySearchConfig(cfg, "main");

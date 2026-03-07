@@ -9,7 +9,11 @@ import { resolveStateDir } from "../config/paths.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
 import { setVerbose } from "../globals.js";
 import { getMemorySearchManager, type MemorySearchManagerResult } from "../memory/index.js";
-import { listMemoryFiles, normalizeExtraMemoryPaths } from "../memory/internal.js";
+import {
+  listMemoryFiles,
+  normalizeExcludedMemoryPaths,
+  normalizeExtraMemoryPaths,
+} from "../memory/internal.js";
 import { defaultRuntime } from "../runtime.js";
 import { formatDocsLink } from "../terminal/links.js";
 import { colorize, isRich, theme } from "../terminal/theme.js";
@@ -120,6 +124,12 @@ function formatExtraPaths(workspaceDir: string, extraPaths: string[]): string[] 
   return normalizeExtraMemoryPaths(workspaceDir, extraPaths).map((entry) => shortenHomePath(entry));
 }
 
+function formatExcludedPaths(workspaceDir: string, excludePaths: string[]): string[] {
+  return normalizeExcludedMemoryPaths(workspaceDir, excludePaths).map((entry) =>
+    shortenHomePath(entry),
+  );
+}
+
 async function withMemoryManagerForAgent(params: {
   cfg: ReturnType<typeof loadConfig>;
   agentId: string;
@@ -186,6 +196,7 @@ async function scanSessionFiles(agentId: string): Promise<SourceScan> {
 async function scanMemoryFiles(
   workspaceDir: string,
   extraPaths: string[] = [],
+  excludePaths: string[] = [],
 ): Promise<SourceScan> {
   const issues: string[] = [];
   const memoryFile = path.join(workspaceDir, "MEMORY.md");
@@ -202,6 +213,7 @@ async function scanMemoryFiles(
   }
 
   const resolvedExtraPaths = normalizeExtraMemoryPaths(workspaceDir, extraPaths);
+  const resolvedExcludedPaths = normalizeExcludedMemoryPaths(workspaceDir, excludePaths);
   for (const extraPath of resolvedExtraPaths) {
     try {
       const stat = await fs.lstat(extraPath);
@@ -244,7 +256,7 @@ async function scanMemoryFiles(
   let listed: string[] = [];
   let listedOk = false;
   try {
-    listed = await listMemoryFiles(workspaceDir, resolvedExtraPaths);
+    listed = await listMemoryFiles(workspaceDir, resolvedExtraPaths, resolvedExcludedPaths);
     listedOk = true;
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
@@ -312,12 +324,14 @@ async function scanMemorySources(params: {
   agentId: string;
   sources: MemorySourceName[];
   extraPaths?: string[];
+  excludePaths?: string[];
 }): Promise<MemorySourceScan> {
   const scans: SourceScan[] = [];
   const extraPaths = params.extraPaths ?? [];
+  const excludePaths = params.excludePaths ?? [];
   for (const source of params.sources) {
     if (source === "memory") {
-      scans.push(await scanMemoryFiles(params.workspaceDir, extraPaths));
+      scans.push(await scanMemoryFiles(params.workspaceDir, extraPaths, excludePaths));
     }
     if (source === "sessions") {
       scans.push(await scanSessionFiles(params.agentId));
@@ -414,6 +428,7 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
               agentId,
               sources,
               extraPaths: status.extraPaths,
+              excludePaths: status.excludePaths,
             })
           : undefined;
         allResults.push({ agentId, status, embeddingProbe, indexError, scan });
@@ -456,12 +471,16 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
     const extraPaths = status.workspaceDir
       ? formatExtraPaths(status.workspaceDir, status.extraPaths ?? [])
       : [];
+    const excludedPaths = status.workspaceDir
+      ? formatExcludedPaths(status.workspaceDir, status.excludePaths ?? [])
+      : [];
     const lines = [
       `${heading("Memory Search")} ${muted(`(${agentId})`)}`,
       `${label("Provider")} ${info(status.provider)} ${muted(`(requested: ${requestedProvider})`)}`,
       `${label("Model")} ${info(modelLabel)}`,
       sourceList ? `${label("Sources")} ${info(sourceList)}` : null,
       extraPaths.length ? `${label("Extra paths")} ${info(extraPaths.join(", "))}` : null,
+      excludedPaths.length ? `${label("Excluded paths")} ${info(excludedPaths.join(", "))}` : null,
       `${label("Indexed")} ${success(indexedLabel)}`,
       `${label("Dirty")} ${status.dirty ? warn("yes") : muted("no")}`,
       `${label("Store")} ${info(storePath)}`,
@@ -632,6 +651,9 @@ export function registerMemoryCli(program: Command) {
                 const extraPaths = status.workspaceDir
                   ? formatExtraPaths(status.workspaceDir, status.extraPaths ?? [])
                   : [];
+                const excludedPaths = status.workspaceDir
+                  ? formatExcludedPaths(status.workspaceDir, status.excludePaths ?? [])
+                  : [];
                 const requestedProvider = status.requestedProvider ?? status.provider;
                 const modelLabel = status.model ?? status.provider;
                 const lines = [
@@ -645,6 +667,9 @@ export function registerMemoryCli(program: Command) {
                     : null,
                   extraPaths.length
                     ? `${label("Extra paths")} ${info(extraPaths.join(", "))}`
+                    : null,
+                  excludedPaths.length
+                    ? `${label("Excluded paths")} ${info(excludedPaths.join(", "))}`
                     : null,
                 ].filter(Boolean) as string[];
                 if (status.fallback) {

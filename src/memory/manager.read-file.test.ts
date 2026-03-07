@@ -11,6 +11,7 @@ function createMemorySearchCfg(options: {
   workspaceDir: string;
   indexPath: string;
   extraPaths?: string[];
+  excludePaths?: string[];
 }): OpenClawConfig {
   return {
     agents: {
@@ -24,6 +25,7 @@ function createMemorySearchCfg(options: {
           query: { minScore: 0, hybrid: { enabled: false } },
           sync: { watch: false, onSessionStart: false, onSearch: false },
           extraPaths: options.extraPaths,
+          excludePaths: options.excludePaths,
         },
       },
       list: [{ id: "main", default: true }],
@@ -158,5 +160,24 @@ describe("MemoryIndexManager.readFile", () => {
     expect(result.path).toBe(relPath);
     expect(result.text).toContain('"apiKey"');
     expect(result.text).not.toContain("sk-12345678901234567890");
+  });
+
+  it("rejects files under excluded paths even when their parent extra path is indexed", async () => {
+    const relPath = "activeclaw/README.md";
+    const absPath = path.join(workspaceDir, relPath);
+    await fs.mkdir(path.dirname(absPath), { recursive: true });
+    await fs.writeFile(absPath, "# excluded\n", "utf-8");
+
+    manager = await getRequiredMemoryIndexManager({
+      cfg: createMemorySearchCfg({
+        workspaceDir,
+        indexPath,
+        extraPaths: [workspaceDir],
+        excludePaths: ["activeclaw"],
+      }),
+      agentId: "main",
+    });
+
+    await expect(manager.readFile({ relPath })).rejects.toThrow("path required");
   });
 });

@@ -71,6 +71,7 @@ describe("memory watcher config", () => {
             sync: { watch: true, watchDebounceMs: 25, onSessionStart: false, onSearch: false },
             query: { minScore: 0, hybrid: { enabled: false } },
             extraPaths: [extraDir],
+            excludePaths: ["activeclaw"],
           },
         },
         list: [{ id: "main", default: true }],
@@ -112,6 +113,7 @@ describe("memory watcher config", () => {
     );
     expect(ignored?.(path.join(workspaceDir, "memory", ".venv", "lib", "python.md"))).toBe(true);
     expect(ignored?.(path.join(workspaceDir, "memory", "project", "notes.md"))).toBe(false);
+    expect(ignored?.(path.join(workspaceDir, "activeclaw", "src", "index.ts"))).toBe(true);
     expect(ignored?.(path.join(workspaceDir, "MEMORY.md"))).toBe(false);
     expect(ignored?.(path.join(extraDir, "notes.md"))).toBe(false);
     expect(ignored?.(path.join(workspaceDir, "image.png"))).toBe(true);

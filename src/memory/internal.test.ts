@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   buildFileEntry,
   chunkMarkdown,
+  isExcludedMemoryPath,
   listMemoryFiles,
+  normalizeExcludedMemoryPaths,
   normalizeExtraMemoryPaths,
   readIndexedTextContent,
   remapChunkLines,
@@ -34,6 +36,21 @@ describe("normalizeExtraMemoryPaths", () => {
       "",
     ]);
     expect(result).toEqual([path.resolve(workspaceDir, "notes"), absPath]);
+  });
+});
+
+describe("normalizeExcludedMemoryPaths", () => {
+  it("trims, resolves, and dedupes paths", () => {
+    const workspaceDir = path.join(os.tmpdir(), "memory-test-workspace");
+    const absPath = path.resolve(path.sep, "shared-ignore");
+    const result = normalizeExcludedMemoryPaths(workspaceDir, [
+      " activeclaw ",
+      "./activeclaw",
+      absPath,
+      absPath,
+      "",
+    ]);
+    expect(result).toEqual([path.resolve(workspaceDir, "activeclaw"), absPath]);
   });
 });
 
@@ -159,6 +176,35 @@ describe("listMemoryFiles", () => {
     const files = await listMemoryFiles(tmpDir, [extraDir]);
     expect(files.some((file) => file.endsWith(path.join("config", ".env")))).toBe(false);
     expect(files.some((file) => file.endsWith(path.join("config", "settings.json")))).toBe(true);
+  });
+
+  it("excludes configured subtrees even when their parent path is indexed", async () => {
+    const tmpDir = getTmpDir();
+    await fs.writeFile(path.join(tmpDir, "MEMORY.md"), "# Default memory");
+    const activeclawDir = path.join(tmpDir, "activeclaw");
+    const hubDataDir = path.join(tmpDir, "hub-data");
+    await fs.mkdir(activeclawDir, { recursive: true });
+    await fs.mkdir(hubDataDir, { recursive: true });
+    await fs.writeFile(path.join(activeclawDir, "README.md"), "excluded");
+    await fs.writeFile(path.join(hubDataDir, "events.jsonl"), '{"ok":true}\n');
+
+    const files = await listMemoryFiles(tmpDir, [tmpDir], ["activeclaw"]);
+    expect(files.some((file) => file.endsWith(path.join("activeclaw", "README.md")))).toBe(false);
+    expect(files.some((file) => file.endsWith(path.join("hub-data", "events.jsonl")))).toBe(true);
+  });
+});
+
+describe("isExcludedMemoryPath", () => {
+  it("matches exact files and nested descendants", () => {
+    const base = path.join(os.tmpdir(), "memory-exclude-check");
+    const excluded = [path.join(base, "activeclaw"), path.join(base, "README.md")];
+    expect(isExcludedMemoryPath(path.join(base, "activeclaw"), excluded)).toBe(true);
+    expect(isExcludedMemoryPath(path.join(base, "activeclaw", "src", "index.ts"), excluded)).toBe(
+      true,
+    );
+    expect(isExcludedMemoryPath(path.join(base, "README.md"), excluded)).toBe(true);
+    expect(isExcludedMemoryPath(path.join(base, "README.md.bak"), excluded)).toBe(false);
+    expect(isExcludedMemoryPath(path.join(base, "hub-data", "events.jsonl"), excluded)).toBe(false);
   });
 });
 

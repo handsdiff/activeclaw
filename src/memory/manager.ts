@@ -20,13 +20,19 @@ import {
 import { isFileMissingError, statRegularFile } from "./fs-utils.js";
 import { bm25RankToScore, buildFtsQuery, mergeHybridResults } from "./hybrid.js";
 import {
+  isExcludedMemoryPath,
   isIndexedTextPath,
   isMemoryPath,
+  normalizeExcludedMemoryPaths,
   normalizeExtraMemoryPaths,
   readIndexedTextContent,
 } from "./internal.js";
 import { MemoryManagerEmbeddingOps } from "./manager-embedding-ops.js";
-import { searchKeyword, searchVector } from "./manager-search.js";
+import {
+  searchKeyword as searchKeywordFts,
+  searchKeywordScan,
+  searchVector,
+} from "./manager-search.js";
 import { extractKeywords } from "./query-expansion.js";
 import type {
   MemoryEmbeddingProbeResult,
@@ -46,6 +52,22 @@ const log = createSubsystemLogger("memory");
 
 const INDEX_CACHE = new Map<string, MemoryIndexManager>();
 const INDEX_CACHE_PENDING = new Map<string, Promise<MemoryIndexManager>>();
+
+type SearchRuntimeState = {
+  db: DatabaseSync;
+  provider: EmbeddingProvider | null;
+  providerUnavailableReason?: string;
+  ftsAvailable: boolean;
+  vectorAvailable: boolean | null;
+  vectorDims?: number;
+  vectorReady: Promise<boolean> | null;
+  snapshot: boolean;
+};
+
+type SearchRuntimeLease = {
+  runtime: SearchRuntimeState;
+  release: () => void;
+};
 
 export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements MemorySearchManager {
   private readonly cacheKey: string;
@@ -114,6 +136,11 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
   >();
   private sessionWarm = new Set<string>();
   private syncing: Promise<void> | null = null;
+  private searchSnapshot: SearchRuntimeState | null = null;
+  private reindexPromoting = false;
+  private activeSearchReaders = 0;
+  private activeSearchReadersDrained: Promise<void> | null = null;
+  private resolveActiveSearchReadersDrained: (() => void) | null = null;
   private readonlyRecoveryAttempts = 0;
   private readonlyRecoverySuccesses = 0;
   private readonlyRecoveryFailures = 0;
@@ -226,6 +253,132 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     this.batch = this.resolveBatchConfig();
   }
 
+  private getCurrentSearchRuntime(): SearchRuntimeState {
+    return {
+      db: this.db,
+      provider: this.provider,
+      providerUnavailableReason: this.providerUnavailableReason,
+      ftsAvailable: this.fts.available,
+      vectorAvailable: this.vector.available,
+      vectorDims: this.vector.dims,
+      vectorReady: this.vectorReady,
+      snapshot: false,
+    };
+  }
+
+  private acquireSearchRuntime(runtime: SearchRuntimeState): SearchRuntimeLease {
+    this.activeSearchReaders += 1;
+    let released = false;
+    return {
+      runtime,
+      release: () => {
+        if (released) {
+          return;
+        }
+        released = true;
+        this.activeSearchReaders = Math.max(0, this.activeSearchReaders - 1);
+        if (this.activeSearchReaders === 0 && this.resolveActiveSearchReadersDrained) {
+          this.resolveActiveSearchReadersDrained();
+          this.resolveActiveSearchReadersDrained = null;
+          this.activeSearchReadersDrained = null;
+        }
+      },
+    };
+  }
+
+  private async getSearchRuntime(): Promise<SearchRuntimeLease | null> {
+    if (this.closed) {
+      return null;
+    }
+    if (this.searchSnapshot) {
+      return this.acquireSearchRuntime(this.searchSnapshot);
+    }
+    if (this.reindexPromoting && this.syncing) {
+      try {
+        await this.syncing;
+      } catch {
+        // Search should resume against whichever DB won after reindex recovery.
+      }
+    }
+    if (this.closed) {
+      return null;
+    }
+    return this.acquireSearchRuntime(this.searchSnapshot ?? this.getCurrentSearchRuntime());
+  }
+
+  private async waitForActiveSearchReadersToDrain(): Promise<void> {
+    if (this.activeSearchReaders === 0) {
+      return;
+    }
+    if (!this.activeSearchReadersDrained) {
+      this.activeSearchReadersDrained = new Promise<void>((resolve) => {
+        this.resolveActiveSearchReadersDrained = resolve;
+      });
+    }
+    await this.activeSearchReadersDrained;
+  }
+
+  private async ensureVectorReadyForSearchRuntime(
+    runtime: SearchRuntimeState,
+    dimensions?: number,
+  ): Promise<boolean> {
+    if (runtime.snapshot) {
+      let ready = runtime.vectorAvailable ?? false;
+      if (runtime.vectorReady) {
+        try {
+          ready = (await runtime.vectorReady) || false;
+        } catch {
+          ready = false;
+        }
+      }
+      if (!ready) {
+        return false;
+      }
+      if (
+        typeof dimensions === "number" &&
+        typeof runtime.vectorDims === "number" &&
+        runtime.vectorDims !== dimensions
+      ) {
+        return false;
+      }
+      return true;
+    }
+    return await this.ensureVectorReady(dimensions);
+  }
+
+  protected onSafeReindexBuildStart(params: {
+    originalDb: DatabaseSync;
+    originalProvider: EmbeddingProvider | null;
+    originalProviderUnavailableReason?: string;
+    originalFtsAvailable: boolean;
+    originalVectorAvailable: boolean | null;
+    originalVectorDims?: number;
+    originalVectorReady: Promise<boolean> | null;
+  }): void {
+    this.searchSnapshot = {
+      db: params.originalDb,
+      provider: params.originalProvider,
+      providerUnavailableReason: params.originalProviderUnavailableReason,
+      ftsAvailable: params.originalFtsAvailable,
+      vectorAvailable: params.originalVectorAvailable,
+      vectorDims: params.originalVectorDims,
+      vectorReady: params.originalVectorReady,
+      snapshot: true,
+    };
+    this.reindexPromoting = false;
+  }
+
+  protected async onSafeReindexPromoteStart(): Promise<void> {
+    this.reindexPromoting = true;
+    this.searchSnapshot = null;
+    await this.waitForActiveSearchReadersToDrain();
+  }
+
+  protected onSafeReindexFinished(): void {
+    this.reindexPromoting = false;
+    this.searchSnapshot = null;
+  }
+
   async warmSession(sessionKey?: string): Promise<void> {
     if (!this.settings.sync.onSessionStart) {
       return;
@@ -250,6 +403,9 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       sessionKey?: string;
     },
   ): Promise<MemorySearchResult[]> {
+    if (this.closed) {
+      return [];
+    }
     void this.warmSession(opts?.sessionKey);
     if (this.settings.sync.onSearch && (this.dirty || this.sessionsDirty)) {
       void this.sync({ reason: "search" }).catch((err) => {
@@ -267,107 +423,112 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       200,
       Math.max(1, Math.floor(maxResults * hybrid.candidateMultiplier)),
     );
+    const lease = await this.getSearchRuntime();
+    if (!lease) {
+      return [];
+    }
+    const { runtime } = lease;
+    try {
+      // FTS-only mode: no embedding provider available
+      if (!runtime.provider) {
+        // Extract keywords for better FTS matching on conversational queries
+        // e.g., "that thing we discussed about the API" -> ["discussed", "API"]
+        const keywords = extractKeywords(cleaned);
+        const searchTerms = keywords.length > 0 ? keywords : [cleaned];
 
-    // FTS-only mode: no embedding provider available
-    if (!this.provider) {
-      if (!this.fts.enabled || !this.fts.available) {
-        log.warn("memory search: no provider and FTS unavailable");
-        return [];
-      }
+        // Search with each keyword and merge results
+        const resultSets = await Promise.all(
+          searchTerms.map((term) => this.searchKeyword(term, candidates, runtime).catch(() => [])),
+        );
 
-      // Extract keywords for better FTS matching on conversational queries
-      // e.g., "that thing we discussed about the API" → ["discussed", "API"]
-      const keywords = extractKeywords(cleaned);
-      const searchTerms = keywords.length > 0 ? keywords : [cleaned];
-
-      // Search with each keyword and merge results
-      const resultSets = await Promise.all(
-        searchTerms.map((term) => this.searchKeyword(term, candidates).catch(() => [])),
-      );
-
-      // Merge and deduplicate results, keeping highest score for each chunk
-      const seenIds = new Map<string, (typeof resultSets)[0][0]>();
-      for (const results of resultSets) {
-        for (const result of results) {
-          const existing = seenIds.get(result.id);
-          if (!existing || result.score > existing.score) {
-            seenIds.set(result.id, result);
+        // Merge and deduplicate results, keeping highest score for each chunk
+        const seenIds = new Map<string, (typeof resultSets)[0][0]>();
+        for (const results of resultSets) {
+          for (const result of results) {
+            const existing = seenIds.get(result.id);
+            if (!existing || result.score > existing.score) {
+              seenIds.set(result.id, result);
+            }
           }
         }
+
+        const merged = [...seenIds.values()]
+          .toSorted((a, b) => b.score - a.score)
+          .filter((entry) => entry.score >= minScore)
+          .slice(0, maxResults);
+
+        return merged;
       }
 
-      const merged = [...seenIds.values()]
-        .toSorted((a, b) => b.score - a.score)
-        .filter((entry) => entry.score >= minScore)
-        .slice(0, maxResults);
+      // If FTS isn't available, hybrid mode cannot use keyword search; degrade to vector-only.
+      const keywordResults =
+        hybrid.enabled && this.fts.enabled && runtime.ftsAvailable
+          ? await this.searchKeyword(cleaned, candidates, runtime).catch(() => [])
+          : [];
 
-      return merged;
-    }
-
-    // If FTS isn't available, hybrid mode cannot use keyword search; degrade to vector-only.
-    const keywordResults =
-      hybrid.enabled && this.fts.enabled && this.fts.available
-        ? await this.searchKeyword(cleaned, candidates).catch(() => [])
+      const queryVec = await this.embedQueryWithTimeout(cleaned, runtime.provider);
+      const hasVector = queryVec.some((v) => v !== 0);
+      const vectorResults = hasVector
+        ? await this.searchVector(queryVec, candidates, runtime).catch(() => [])
         : [];
 
-    const queryVec = await this.embedQueryWithTimeout(cleaned);
-    const hasVector = queryVec.some((v) => v !== 0);
-    const vectorResults = hasVector
-      ? await this.searchVector(queryVec, candidates).catch(() => [])
-      : [];
+      if (!hybrid.enabled || !this.fts.enabled || !runtime.ftsAvailable) {
+        return vectorResults.filter((entry) => entry.score >= minScore).slice(0, maxResults);
+      }
 
-    if (!hybrid.enabled || !this.fts.enabled || !this.fts.available) {
-      return vectorResults.filter((entry) => entry.score >= minScore).slice(0, maxResults);
+      const merged = await this.mergeHybridResults({
+        vector: vectorResults,
+        keyword: keywordResults,
+        vectorWeight: hybrid.vectorWeight,
+        textWeight: hybrid.textWeight,
+        mmr: hybrid.mmr,
+        temporalDecay: hybrid.temporalDecay,
+      });
+      const strict = merged.filter((entry) => entry.score >= minScore);
+      if (strict.length > 0 || keywordResults.length === 0) {
+        return strict.slice(0, maxResults);
+      }
+
+      // Hybrid defaults can produce keyword-only matches with max score equal to
+      // textWeight (for example 0.3). If minScore is higher (for example 0.35),
+      // these exact lexical hits get filtered out even when they are the only
+      // relevant results.
+      const relaxedMinScore = Math.min(minScore, hybrid.textWeight);
+      const keywordKeys = new Set(
+        keywordResults.map(
+          (entry) => `${entry.source}:${entry.path}:${entry.startLine}:${entry.endLine}`,
+        ),
+      );
+      return merged
+        .filter(
+          (entry) =>
+            keywordKeys.has(`${entry.source}:${entry.path}:${entry.startLine}:${entry.endLine}`) &&
+            entry.score >= relaxedMinScore,
+        )
+        .slice(0, maxResults);
+    } finally {
+      lease.release();
     }
-
-    const merged = await this.mergeHybridResults({
-      vector: vectorResults,
-      keyword: keywordResults,
-      vectorWeight: hybrid.vectorWeight,
-      textWeight: hybrid.textWeight,
-      mmr: hybrid.mmr,
-      temporalDecay: hybrid.temporalDecay,
-    });
-    const strict = merged.filter((entry) => entry.score >= minScore);
-    if (strict.length > 0 || keywordResults.length === 0) {
-      return strict.slice(0, maxResults);
-    }
-
-    // Hybrid defaults can produce keyword-only matches with max score equal to
-    // textWeight (for example 0.3). If minScore is higher (for example 0.35),
-    // these exact lexical hits get filtered out even when they are the only
-    // relevant results.
-    const relaxedMinScore = Math.min(minScore, hybrid.textWeight);
-    const keywordKeys = new Set(
-      keywordResults.map(
-        (entry) => `${entry.source}:${entry.path}:${entry.startLine}:${entry.endLine}`,
-      ),
-    );
-    return merged
-      .filter(
-        (entry) =>
-          keywordKeys.has(`${entry.source}:${entry.path}:${entry.startLine}:${entry.endLine}`) &&
-          entry.score >= relaxedMinScore,
-      )
-      .slice(0, maxResults);
   }
 
   private async searchVector(
     queryVec: number[],
     limit: number,
+    runtime: SearchRuntimeState,
   ): Promise<Array<MemorySearchResult & { id: string }>> {
     // This method should never be called without a provider
-    if (!this.provider) {
+    if (!runtime.provider) {
       return [];
     }
     const results = await searchVector({
-      db: this.db,
+      db: runtime.db,
       vectorTable: VECTOR_TABLE,
-      providerModel: this.provider.model,
+      providerModel: runtime.provider.model,
       queryVec,
       limit,
       snippetMaxChars: SNIPPET_MAX_CHARS,
-      ensureVectorReady: async (dimensions) => await this.ensureVectorReady(dimensions),
+      ensureVectorReady: async (dimensions) =>
+        await this.ensureVectorReadyForSearchRuntime(runtime, dimensions),
       sourceFilterVec: this.buildSourceFilter("c"),
       sourceFilterChunks: this.buildSourceFilter(),
     });
@@ -381,24 +542,31 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
   private async searchKeyword(
     query: string,
     limit: number,
+    runtime: SearchRuntimeState,
   ): Promise<Array<MemorySearchResult & { id: string; textScore: number }>> {
-    if (!this.fts.enabled || !this.fts.available) {
-      return [];
-    }
     const sourceFilter = this.buildSourceFilter();
-    // In FTS-only mode (no provider), search all models; otherwise filter by current provider's model
-    const providerModel = this.provider?.model;
-    const results = await searchKeyword({
-      db: this.db,
-      ftsTable: FTS_TABLE,
-      providerModel,
-      query,
-      limit,
-      snippetMaxChars: SNIPPET_MAX_CHARS,
-      sourceFilter,
-      buildFtsQuery: (raw) => this.buildFtsQuery(raw),
-      bm25RankToScore,
-    });
+    const providerModel = runtime.provider?.model;
+    const results =
+      this.fts.enabled && runtime.ftsAvailable
+        ? await searchKeywordFts({
+            db: runtime.db,
+            ftsTable: FTS_TABLE,
+            providerModel,
+            query,
+            limit,
+            snippetMaxChars: SNIPPET_MAX_CHARS,
+            sourceFilter,
+            buildFtsQuery: (raw) => this.buildFtsQuery(raw),
+            bm25RankToScore,
+          })
+        : await searchKeywordScan({
+            db: runtime.db,
+            providerModel,
+            query,
+            limit,
+            snippetMaxChars: SNIPPET_MAX_CHARS,
+            sourceFilter,
+          });
     return results.map((entry) => entry as MemorySearchResult & { id: string; textScore: number });
   }
 
@@ -551,6 +719,13 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     const absPath = path.isAbsolute(rawPath)
       ? path.resolve(rawPath)
       : path.resolve(this.workspaceDir, rawPath);
+    const excludedPaths = normalizeExcludedMemoryPaths(
+      this.workspaceDir,
+      this.settings.excludePaths,
+    );
+    if (isExcludedMemoryPath(absPath, excludedPaths)) {
+      throw new Error("path required");
+    }
     const relPath = path.relative(this.workspaceDir, absPath).replace(/\\/g, "/");
     const inWorkspace =
       relPath.length > 0 && !relPath.startsWith("..") && !path.isAbsolute(relPath);
@@ -674,6 +849,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       requestedProvider: this.requestedProvider,
       sources: Array.from(this.sources),
       extraPaths: this.settings.extraPaths,
+      excludePaths: this.settings.excludePaths,
       sourceCounts,
       cache: this.cache.enabled
         ? {
@@ -785,6 +961,9 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
         await pendingSync;
       } catch {}
     }
+    await this.waitForActiveSearchReadersToDrain();
+    this.searchSnapshot = null;
+    this.reindexPromoting = false;
     this.db.close();
     INDEX_CACHE.delete(this.cacheKey);
   }

@@ -80,16 +80,38 @@ export function normalizeRelPath(value: string): string {
 }
 
 export function normalizeExtraMemoryPaths(workspaceDir: string, extraPaths?: string[]): string[] {
-  if (!extraPaths?.length) {
+  return normalizeConfiguredMemoryPaths(workspaceDir, extraPaths);
+}
+
+export function normalizeExcludedMemoryPaths(
+  workspaceDir: string,
+  excludePaths?: string[],
+): string[] {
+  return normalizeConfiguredMemoryPaths(workspaceDir, excludePaths);
+}
+
+function normalizeConfiguredMemoryPaths(workspaceDir: string, paths?: string[]): string[] {
+  if (!paths?.length) {
     return [];
   }
-  const resolved = extraPaths
+  const resolved = paths
     .map((value) => value.trim())
     .filter(Boolean)
     .map((value) =>
       path.isAbsolute(value) ? path.resolve(value) : path.resolve(workspaceDir, value),
     );
   return Array.from(new Set(resolved));
+}
+
+export function isExcludedMemoryPath(absPath: string, excludedPaths?: string[]): boolean {
+  if (!excludedPaths?.length) {
+    return false;
+  }
+  const resolvedPath = path.resolve(absPath);
+  return excludedPaths.some(
+    (excludedPath) =>
+      resolvedPath === excludedPath || resolvedPath.startsWith(`${excludedPath}${path.sep}`),
+  );
 }
 
 export function isMemoryPath(relPath: string): boolean {
@@ -140,7 +162,13 @@ export async function readIndexedTextContent(absPath: string): Promise<string> {
   return sanitizeIndexedTextContent(content);
 }
 
-async function shouldIncludeIndexedFile(absPath: string): Promise<boolean> {
+async function shouldIncludeIndexedFile(
+  absPath: string,
+  excludedPaths?: string[],
+): Promise<boolean> {
+  if (isExcludedMemoryPath(absPath, excludedPaths)) {
+    return false;
+  }
   if (!isIndexedTextPath(absPath)) {
     return false;
   }
@@ -152,10 +180,16 @@ async function shouldIncludeIndexedFile(absPath: string): Promise<boolean> {
   }
 }
 
-async function walkDir(dir: string, files: string[]) {
+async function walkDir(dir: string, files: string[], excludedPaths?: string[]) {
+  if (isExcludedMemoryPath(dir, excludedPaths)) {
+    return;
+  }
   const entries = await fs.readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
+    if (isExcludedMemoryPath(full, excludedPaths)) {
+      continue;
+    }
     if (entry.isSymbolicLink()) {
       continue;
     }
@@ -163,13 +197,13 @@ async function walkDir(dir: string, files: string[]) {
       if (SKIPPED_INDEX_DIRS.has(entry.name)) {
         continue;
       }
-      await walkDir(full, files);
+      await walkDir(full, files, excludedPaths);
       continue;
     }
     if (!entry.isFile()) {
       continue;
     }
-    if (!(await shouldIncludeIndexedFile(full))) {
+    if (!(await shouldIncludeIndexedFile(full, excludedPaths))) {
       continue;
     }
     files.push(full);
@@ -179,14 +213,19 @@ async function walkDir(dir: string, files: string[]) {
 export async function listMemoryFiles(
   workspaceDir: string,
   extraPaths?: string[],
+  excludePaths?: string[],
 ): Promise<string[]> {
   const result: string[] = [];
+  const normalizedExcludedPaths = normalizeExcludedMemoryPaths(workspaceDir, excludePaths);
   const memoryFile = path.join(workspaceDir, "MEMORY.md");
   const altMemoryFile = path.join(workspaceDir, "memory.md");
   const memoryDir = path.join(workspaceDir, "memory");
 
   const addMarkdownFile = async (absPath: string) => {
     try {
+      if (isExcludedMemoryPath(absPath, normalizedExcludedPaths)) {
+        return;
+      }
       const stat = await fs.lstat(absPath);
       if (stat.isSymbolicLink() || !stat.isFile()) {
         return;
@@ -203,23 +242,31 @@ export async function listMemoryFiles(
   try {
     const dirStat = await fs.lstat(memoryDir);
     if (!dirStat.isSymbolicLink() && dirStat.isDirectory()) {
-      await walkDir(memoryDir, result);
+      await walkDir(memoryDir, result, normalizedExcludedPaths);
     }
   } catch {}
 
   const normalizedExtraPaths = normalizeExtraMemoryPaths(workspaceDir, extraPaths);
   if (normalizedExtraPaths.length > 0) {
     for (const inputPath of normalizedExtraPaths) {
+      if (isExcludedMemoryPath(inputPath, normalizedExcludedPaths)) {
+        continue;
+      }
       try {
         const stat = await fs.lstat(inputPath);
         if (stat.isSymbolicLink()) {
           continue;
         }
         if (stat.isDirectory()) {
-          await walkDir(inputPath, result);
+          await walkDir(inputPath, result, normalizedExcludedPaths);
           continue;
         }
-        if (stat.isFile() && isIndexedTextPath(inputPath) && stat.size <= MAX_INDEX_FILE_BYTES) {
+        if (
+          stat.isFile() &&
+          isIndexedTextPath(inputPath) &&
+          stat.size <= MAX_INDEX_FILE_BYTES &&
+          !isExcludedMemoryPath(inputPath, normalizedExcludedPaths)
+        ) {
           result.push(inputPath);
         }
       } catch {}

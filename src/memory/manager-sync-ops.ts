@@ -29,8 +29,10 @@ import { isFileMissingError } from "./fs-utils.js";
 import {
   buildFileEntry,
   ensureDir,
+  isExcludedMemoryPath,
   isIndexedTextPath,
   listMemoryFiles,
+  normalizeExcludedMemoryPaths,
   normalizeExtraMemoryPaths,
   runWithConcurrency,
 } from "./internal.js";
@@ -158,6 +160,40 @@ export abstract class MemoryManagerSyncOps {
     entry: MemoryFileEntry | SessionFileEntry,
     options: { source: MemorySource; content?: string },
   ): Promise<void>;
+  protected onSafeReindexBuildStart(_params: {
+    originalDb: DatabaseSync;
+    originalProvider: EmbeddingProvider | null;
+    originalProviderUnavailableReason?: string;
+    originalFtsAvailable: boolean;
+    originalVectorAvailable: boolean | null;
+    originalVectorDims?: number;
+    originalVectorReady: Promise<boolean> | null;
+  }): void {}
+  protected onSafeReindexPromoteStart(): Promise<void> | void {}
+  protected onSafeReindexFinished(): void {}
+
+  protected deleteIndexedPathRows(
+    pathValue: string,
+    source: MemorySource,
+    options?: { deleteFile?: boolean },
+  ): void {
+    if (options?.deleteFile !== false) {
+      this.db.prepare(`DELETE FROM files WHERE path = ? AND source = ?`).run(pathValue, source);
+    }
+    try {
+      this.db
+        .prepare(
+          `DELETE FROM ${VECTOR_TABLE} WHERE id IN (SELECT id FROM chunks WHERE path = ? AND source = ?)`,
+        )
+        .run(pathValue, source);
+    } catch {}
+    this.db.prepare(`DELETE FROM chunks WHERE path = ? AND source = ?`).run(pathValue, source);
+    try {
+      this.db
+        .prepare(`DELETE FROM ${FTS_TABLE} WHERE path = ? AND source = ?`)
+        .run(pathValue, source);
+    } catch {}
+  }
 
   protected async ensureVectorReady(dimensions?: number): Promise<boolean> {
     if (!this.vector.enabled) {
@@ -365,6 +401,10 @@ export abstract class MemoryManagerSyncOps {
     if (!this.sources.has("memory") || !this.settings.sync.watch || this.watcher) {
       return;
     }
+    const excludedPaths = normalizeExcludedMemoryPaths(
+      this.workspaceDir,
+      this.settings.excludePaths,
+    );
     const watchPaths = new Set<string>([
       path.join(this.workspaceDir, "MEMORY.md"),
       path.join(this.workspaceDir, "memory.md"),
@@ -372,6 +412,9 @@ export abstract class MemoryManagerSyncOps {
     ]);
     const additionalPaths = normalizeExtraMemoryPaths(this.workspaceDir, this.settings.extraPaths);
     for (const entry of additionalPaths) {
+      if (isExcludedMemoryPath(entry, excludedPaths)) {
+        continue;
+      }
       try {
         const stat = fsSync.lstatSync(entry);
         if (stat.isSymbolicLink()) {
@@ -396,6 +439,9 @@ export abstract class MemoryManagerSyncOps {
         const resolved = path.resolve(normalized);
         if (watchRoots.has(resolved)) {
           return false;
+        }
+        if (isExcludedMemoryPath(resolved, excludedPaths)) {
+          return true;
         }
         if (shouldIgnoreMemoryWatchPath(normalized)) {
           return true;
@@ -666,13 +712,11 @@ export abstract class MemoryManagerSyncOps {
     needsFullReindex: boolean;
     progress?: MemorySyncProgressState;
   }) {
-    // FTS-only mode: skip embedding sync (no provider)
-    if (!this.provider) {
-      log.debug("Skipping memory file sync in FTS-only mode (no embedding provider)");
-      return;
-    }
-
-    const files = await listMemoryFiles(this.workspaceDir, this.settings.extraPaths);
+    const files = await listMemoryFiles(
+      this.workspaceDir,
+      this.settings.extraPaths,
+      this.settings.excludePaths,
+    );
     const fileEntries = (
       await Promise.all(files.map(async (file) => buildFileEntry(file, this.workspaceDir)))
     ).filter((entry): entry is MemoryFileEntry => entry !== null);
@@ -681,6 +725,7 @@ export abstract class MemoryManagerSyncOps {
       needsFullReindex: params.needsFullReindex,
       batch: this.batch.enabled,
       concurrency: this.getIndexConcurrency(),
+      mode: this.provider ? "hybrid" : "fts-only",
     });
     const activePaths = new Set(fileEntries.map((entry) => entry.path));
     if (params.progress) {
@@ -724,22 +769,7 @@ export abstract class MemoryManagerSyncOps {
       if (activePaths.has(stale.path)) {
         continue;
       }
-      this.db.prepare(`DELETE FROM files WHERE path = ? AND source = ?`).run(stale.path, "memory");
-      try {
-        this.db
-          .prepare(
-            `DELETE FROM ${VECTOR_TABLE} WHERE id IN (SELECT id FROM chunks WHERE path = ? AND source = ?)`,
-          )
-          .run(stale.path, "memory");
-      } catch {}
-      this.db.prepare(`DELETE FROM chunks WHERE path = ? AND source = ?`).run(stale.path, "memory");
-      if (this.fts.enabled && this.fts.available) {
-        try {
-          this.db
-            .prepare(`DELETE FROM ${FTS_TABLE} WHERE path = ? AND source = ? AND model = ?`)
-            .run(stale.path, "memory", this.provider.model);
-        } catch {}
-      }
+      this.deleteIndexedPathRows(stale.path, "memory");
     }
   }
 
@@ -747,12 +777,6 @@ export abstract class MemoryManagerSyncOps {
     needsFullReindex: boolean;
     progress?: MemorySyncProgressState;
   }) {
-    // FTS-only mode: skip embedding sync (no provider)
-    if (!this.provider) {
-      log.debug("Skipping session file sync in FTS-only mode (no embedding provider)");
-      return;
-    }
-
     const files = await listSessionFilesForAgent(this.agentId);
     const activePaths = new Set(files.map((file) => sessionPathForFile(file)));
     const indexAll = params.needsFullReindex || this.sessionsDirtyFiles.size === 0;
@@ -762,6 +786,7 @@ export abstract class MemoryManagerSyncOps {
       dirtyFiles: this.sessionsDirtyFiles.size,
       batch: this.batch.enabled,
       concurrency: this.getIndexConcurrency(),
+      mode: this.provider ? "hybrid" : "fts-only",
     });
     if (params.progress) {
       params.progress.total += files.length;
@@ -827,26 +852,7 @@ export abstract class MemoryManagerSyncOps {
       if (activePaths.has(stale.path)) {
         continue;
       }
-      this.db
-        .prepare(`DELETE FROM files WHERE path = ? AND source = ?`)
-        .run(stale.path, "sessions");
-      try {
-        this.db
-          .prepare(
-            `DELETE FROM ${VECTOR_TABLE} WHERE id IN (SELECT id FROM chunks WHERE path = ? AND source = ?)`,
-          )
-          .run(stale.path, "sessions");
-      } catch {}
-      this.db
-        .prepare(`DELETE FROM chunks WHERE path = ? AND source = ?`)
-        .run(stale.path, "sessions");
-      if (this.fts.enabled && this.fts.available) {
-        try {
-          this.db
-            .prepare(`DELETE FROM ${FTS_TABLE} WHERE path = ? AND source = ? AND model = ?`)
-            .run(stale.path, "sessions", this.provider.model);
-        } catch {}
-      }
+      this.deleteIndexedPathRows(stale.path, "sessions");
     }
   }
 
@@ -949,6 +955,8 @@ export abstract class MemoryManagerSyncOps {
           reason: params?.reason ?? "fallback",
           force: true,
           progress: progress ?? undefined,
+          snapshotProvider: null,
+          snapshotProviderUnavailableReason: `keyword-only snapshot during fallback reindex: ${reason}`,
         });
         return;
       }
@@ -1041,6 +1049,8 @@ export abstract class MemoryManagerSyncOps {
     reason?: string;
     force?: boolean;
     progress?: MemorySyncProgressState;
+    snapshotProvider?: EmbeddingProvider | null;
+    snapshotProviderUnavailableReason?: string;
   }): Promise<void> {
     const dbPath = resolveUserPath(this.settings.store.path);
     const tempDbPath = `${dbPath}.tmp-${randomUUID()}`;
@@ -1071,6 +1081,17 @@ export abstract class MemoryManagerSyncOps {
       this.vectorReady = originalDbClosed ? null : originalState.vectorReady;
     };
 
+    const hasSnapshotProvider = Object.prototype.hasOwnProperty.call(params, "snapshotProvider");
+    this.onSafeReindexBuildStart({
+      originalDb,
+      originalProvider: hasSnapshotProvider ? (params.snapshotProvider ?? null) : this.provider,
+      originalProviderUnavailableReason:
+        params.snapshotProviderUnavailableReason ?? this.providerUnavailableReason,
+      originalFtsAvailable: originalState.ftsAvailable,
+      originalVectorAvailable: originalState.vectorAvailable,
+      originalVectorDims: originalState.vectorDims,
+      originalVectorReady: originalState.vectorReady,
+    });
     this.db = tempDb;
     this.vectorReady = null;
     this.vector.available = null;
@@ -1124,6 +1145,7 @@ export abstract class MemoryManagerSyncOps {
       this.writeMeta(nextMeta);
       this.pruneEmbeddingCacheIfNeeded?.();
 
+      await this.onSafeReindexPromoteStart();
       this.db.close();
       originalDb.close();
       originalDbClosed = true;
@@ -1136,12 +1158,14 @@ export abstract class MemoryManagerSyncOps {
       this.vector.loadError = undefined;
       this.ensureSchema();
       this.vector.dims = nextMeta?.vectorDims;
+      this.onSafeReindexFinished();
     } catch (err) {
       try {
         this.db.close();
       } catch {}
       await this.removeIndexFiles(tempDbPath);
       restoreOriginalState();
+      this.onSafeReindexFinished();
       throw err;
     }
   }

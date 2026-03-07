@@ -10,6 +10,7 @@ export type ResolvedMemorySearchConfig = {
   enabled: boolean;
   sources: Array<"memory" | "sessions">;
   extraPaths: string[];
+  excludePaths: string[];
   provider: "openai" | "local" | "gemini" | "voyage" | "mistral" | "ollama" | "auto";
   remote?: {
     baseUrl?: string;
@@ -202,6 +203,10 @@ function mergeConfig(
     .map((value) => value.trim())
     .filter(Boolean);
   const extraPaths = Array.from(new Set(rawPaths));
+  const rawExcludedPaths = [...(defaults?.excludePaths ?? []), ...(overrides?.excludePaths ?? [])]
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const excludePaths = Array.from(new Set(rawExcludedPaths));
   const vector = {
     enabled: overrides?.store?.vector?.enabled ?? defaults?.store?.vector?.enabled ?? true,
     extensionPath:
@@ -305,6 +310,7 @@ function mergeConfig(
     enabled,
     sources,
     extraPaths,
+    excludePaths,
     provider,
     remote,
     experimental: {

@@ -189,3 +189,83 @@ export async function searchKeyword(params: {
     };
   });
 }
+
+const escapeLikePattern = (value: string): string =>
+  value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+
+const extractSearchTerms = (raw: string): string[] =>
+  raw
+    .toLowerCase()
+    .match(/[\p{L}\p{N}_]+/gu)
+    ?.map((term) => term.trim())
+    .filter(Boolean) ?? [];
+
+export async function searchKeywordScan(params: {
+  db: DatabaseSync;
+  providerModel: string | undefined;
+  query: string;
+  limit: number;
+  snippetMaxChars: number;
+  sourceFilter: { sql: string; params: SearchSource[] };
+}): Promise<Array<SearchRowResult & { textScore: number }>> {
+  if (params.limit <= 0) {
+    return [];
+  }
+  const terms = Array.from(new Set(extractSearchTerms(params.query)));
+  if (terms.length === 0) {
+    return [];
+  }
+
+  const likeClause = terms.map(() => `lower(text) LIKE ? ESCAPE '\\'`).join(" OR ");
+  const likeParams = terms.map((term) => `%${escapeLikePattern(term)}%`);
+  const modelClause = params.providerModel ? " AND model = ?" : "";
+  const modelParams = params.providerModel ? [params.providerModel] : [];
+  const fetchLimit = Math.max(params.limit * 8, 32);
+  const rows = params.db
+    .prepare(
+      `SELECT id, path, source, start_line, end_line, text, updated_at\n` +
+        `  FROM chunks\n` +
+        ` WHERE (${likeClause})${modelClause}${params.sourceFilter.sql}\n` +
+        ` ORDER BY updated_at DESC\n` +
+        ` LIMIT ?`,
+    )
+    .all(...likeParams, ...modelParams, ...params.sourceFilter.params, fetchLimit) as Array<{
+    id: string;
+    path: string;
+    source: SearchSource;
+    start_line: number;
+    end_line: number;
+    text: string;
+    updated_at: number;
+  }>;
+
+  const normalizedQuery = params.query.trim().toLowerCase();
+  return rows
+    .map((row) => {
+      const normalizedText = row.text.toLowerCase();
+      const matches = terms.filter((term) => normalizedText.includes(term)).length;
+      if (matches === 0) {
+        return null;
+      }
+      const exactBoost =
+        normalizedQuery.length > 0 && normalizedText.includes(normalizedQuery) ? 0.15 : 0;
+      const textScore = Math.min(1, matches / terms.length + exactBoost);
+      return {
+        id: row.id,
+        path: row.path,
+        startLine: row.start_line,
+        endLine: row.end_line,
+        score: textScore,
+        textScore,
+        snippet: truncateUtf16Safe(row.text, params.snippetMaxChars),
+        source: row.source,
+        updatedAt: row.updated_at,
+      };
+    })
+    .filter(
+      (row): row is SearchRowResult & { textScore: number; updatedAt: number } => row !== null,
+    )
+    .toSorted((a, b) => b.textScore - a.textScore || b.updatedAt - a.updatedAt)
+    .slice(0, params.limit)
+    .map(({ updatedAt: _updatedAt, ...row }) => row);
+}
