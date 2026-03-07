@@ -86,7 +86,6 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     | "auto";
   protected fallbackFrom?: "openai" | "local" | "gemini" | "voyage" | "mistral" | "ollama";
   protected fallbackReason?: string;
-  private readonly providerUnavailableReason?: string;
   protected openAi?: OpenAiEmbeddingClient;
   protected gemini?: GeminiEmbeddingClient;
   protected voyage?: VoyageEmbeddingClient;
