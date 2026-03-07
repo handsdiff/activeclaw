@@ -40,6 +40,7 @@ describe("memory index", () => {
   let indexExtraPath = "";
   let indexStatusPath = "";
   let indexSourceChangePath = "";
+  let indexSessionStartPath = "";
   let indexModelPath = "";
   let sourceChangeStateDir = "";
   const sourceChangeSessionLogLines = [
@@ -73,6 +74,7 @@ describe("memory index", () => {
     indexExtraPath = path.join(workspaceDir, "index-extra.sqlite");
     indexStatusPath = path.join(workspaceDir, "index-status.sqlite");
     indexSourceChangePath = path.join(workspaceDir, "index-source-change.sqlite");
+    indexSessionStartPath = path.join(workspaceDir, "index-session-start.sqlite");
     indexModelPath = path.join(workspaceDir, "index-model-change.sqlite");
     sourceChangeStateDir = path.join(fixtureRoot, "state-source-change");
 
@@ -311,6 +313,44 @@ describe("memory index", () => {
         secondStatus.sourceCounts?.find((entry) => entry.source === "sessions")?.chunks ?? 0,
       ).toBeGreaterThan(0);
       await secondManager.close?.();
+    } finally {
+      if (previousStateDir === undefined) {
+        delete process.env.OPENCLAW_STATE_DIR;
+      } else {
+        process.env.OPENCLAW_STATE_DIR = previousStateDir;
+      }
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("includes sessions in a full reindex triggered from session-start", async () => {
+    const stateDir = path.join(fixtureRoot, "state-session-start");
+    const sessionDir = path.join(stateDir, "agents", "main", "sessions");
+    await fs.rm(stateDir, { recursive: true, force: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+    await fs.writeFile(
+      path.join(sessionDir, "session-start-reindex.jsonl"),
+      `${sourceChangeSessionLogLines}\n`,
+    );
+
+    const previousStateDir = process.env.OPENCLAW_STATE_DIR;
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+
+    try {
+      const cfg = createCfg({
+        storePath: indexSessionStartPath,
+        sources: ["memory", "sessions"],
+        sessionMemory: true,
+      });
+      const result = await getMemorySearchManager({ cfg, agentId: "main" });
+      const manager = requireManager(result);
+      await manager.sync?.({ reason: "session-start" });
+      const status = manager.status();
+      expect(status.sourceCounts?.find((entry) => entry.source === "sessions")?.files).toBe(1);
+      expect(
+        status.sourceCounts?.find((entry) => entry.source === "sessions")?.chunks ?? 0,
+      ).toBeGreaterThan(0);
+      await manager.close?.();
     } finally {
       if (previousStateDir === undefined) {
         delete process.env.OPENCLAW_STATE_DIR;
