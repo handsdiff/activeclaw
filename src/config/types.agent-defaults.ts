@@ -6,6 +6,7 @@ import type {
   HumanDelayConfig,
   TypingMode,
 } from "./types.base.js";
+import type { AgentHistoryConfig } from "./types.history.js";
 import type { MemorySearchConfig } from "./types.tools.js";
 
 export type AgentModelEntryConfig = {
@@ -183,6 +184,8 @@ export type AgentDefaultsConfig = {
   };
   /** Vector memory search configuration (per-agent overrides supported). */
   memorySearch?: MemorySearchConfig;
+  /** Durable searchable history corpus for conversations and cron runs. */
+  history?: AgentHistoryConfig;
   /** Pre-turn memory recall: automatically search memory before each model turn. */
   memoryRecall?: {
     enabled?: boolean;

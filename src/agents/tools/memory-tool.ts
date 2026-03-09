@@ -50,7 +50,7 @@ export function createMemorySearchTool(options: {
     label: "Memory Search",
     name: "memory_search",
     description:
-      "Mandatory recall step: semantically search the indexed operating corpus before answering questions about prior work, decisions, dates, people, preferences, todos, cron state, logs, config, or code. The indexed corpus can include canonical memory files, session transcripts, configured cron/config/log paths, and allowlisted workspace text/code files. Returns top snippets with path + lines. If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user.",
+      "Mandatory recall step: semantically search the indexed operating corpus before answering questions about prior work, decisions, dates, people, preferences, todos, cron state, delivery history, config, or code. The indexed corpus can include canonical memory files, live session transcripts, the durable history corpus for conversations and cron runs, configured operational artifacts, and allowlisted workspace text/code files. Returns top snippets with path + lines. If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user.",
     parameters: MemorySearchSchema,
     execute: async (_toolCallId, params) => {
       const query = readStringParam(params, "query", { required: true });
@@ -111,7 +111,7 @@ export function createMemoryGetTool(options: {
     label: "Memory Get",
     name: "memory_get",
     description:
-      "Safe snippet read from indexed operational files with optional from/lines; use after memory_search to pull only the needed lines from memory docs, session/config artifacts, or allowlisted workspace text/code files and keep context small.",
+      "Safe snippet read from indexed operational files with optional from/lines; use after memory_search to pull only the needed lines from memory docs, durable history/session artifacts, config/cron records, or allowlisted workspace text/code files and keep context small.",
     parameters: MemoryGetSchema,
     execute: async (_toolCallId, params) => {
       const relPath = readStringParam(params, "path", { required: true });

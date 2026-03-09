@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { OpenClawConfig } from "../../config/types.js";
 import type { MemorySearchResult } from "../../memory/types.js";
 import { runPreTurnMemoryRecall } from "./agent-runner-recall.js";
 
@@ -15,7 +16,7 @@ vi.mock("../../memory/search-manager.js", () => ({
   getMemorySearchManager: (...args: unknown[]) => getMemorySearchManagerMock(...args),
 }));
 
-const cfg = {
+const cfg: OpenClawConfig = {
   agents: {
     defaults: {
       memoryRecall: {
@@ -35,7 +36,7 @@ const cfg = {
     },
     list: [{ id: "main", default: true }],
   },
-} as const;
+};
 
 describe("runPreTurnMemoryRecall", () => {
   beforeEach(() => {
@@ -79,8 +80,10 @@ describe("runPreTurnMemoryRecall", () => {
     expect(block).toContain("## Operating Brief");
     expect(block).toContain("Indexed operating surface:");
     expect(block).toContain("Session transcripts included in semantic recall.");
-    expect(block).toContain("Configured cron artifacts.");
-    expect(block).toContain("Configured operational logs and JSONL artifacts.");
+    expect(block).toContain("Configured cron artifacts outside the durable history corpus.");
+    expect(block).toContain(
+      "Configured operational logs and JSONL artifacts outside the durable history corpus.",
+    );
     expect(block).toContain("Configured workspace/config files.");
     expect(block).toContain(
       "- Session: [sessions/demo.jsonl#L12] User asked about the cron rollout.",

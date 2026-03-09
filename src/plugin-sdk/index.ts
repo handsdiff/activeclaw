@@ -109,6 +109,12 @@ export type {
   GatewayRequestHandlerOptions,
   RespondFn,
 } from "../gateway/server-methods/types.js";
+export {
+  emitCronHistory,
+  emitInboundHistory,
+  emitInboundHistoryFromContext,
+  emitOutboundHistory,
+} from "../history/emit.js";
 export type {
   PluginRuntime,
   RuntimeLogger,

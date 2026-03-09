@@ -768,7 +768,42 @@ export const FIELD_HELP: Record<string, string> = {
   "agents.defaults.memorySearch.enabled":
     "Master toggle for memory search indexing and retrieval behavior on this agent profile. Keep enabled for semantic recall, and disable when you want fully stateless responses.",
   "agents.defaults.memorySearch.sources":
-    'Chooses which sources are indexed: "memory" reads MEMORY.md + memory files, and "sessions" includes transcript history. Keep ["memory"] unless you need recall from prior chat transcripts.',
+    'Chooses which sources are indexed: "memory" reads MEMORY.md + memory files, "sessions" includes live transcript history, and "history" reads the durable searchable history corpus. Keep ["memory"] unless you need transcript or long-horizon operational recall.',
+  "agents.defaults.history":
+    "Controls the durable per-agent history corpus used for long-horizon recall across conversations and cron runs. Enable this when you want recall to survive session resets and transcript churn.",
+  "agents.defaults.history.enabled":
+    "Enables durable history capture for the agent profile. Keep off when you only want curated memory plus live session continuity, and turn on when full operational recall matters.",
+  "agents.defaults.history.path":
+    "Overrides the durable history root. Supports `~` and `{agentId}` expansion; Stage 1 requires the resolved path to stay under the agent's state tree.",
+  "agents.defaults.history.channel":
+    "Controls durable conversation-history capture for chat surfaces such as Telegram, Hub, WhatsApp, and other channel adapters.",
+  "agents.defaults.history.channel.enabled":
+    "Enables durable channel-history capture. Leave on when history is enabled unless you want cron-only durable recall.",
+  "agents.defaults.history.channel.surfaces":
+    "Restricts durable channel-history capture to specific surface ids (for example `telegram`, `hub`, or `whatsapp`). Omit to capture all supported surfaces.",
+  "agents.defaults.history.channel.includeQuotedContext":
+    "Stores quoted or replied-to text snapshots when providers expose them, improving exact historical recall for reply-chain questions.",
+  "agents.defaults.history.channel.includeNonDispatchedInbound":
+    "Persists blocked, pairing, and other non-dispatched inbound attempts alongside normal handled messages so operational history remains complete.",
+  "agents.defaults.history.cron":
+    "Controls durable history capture for cron runs, including prompts, outputs, delivery state, and failures.",
+  "agents.defaults.history.cron.enabled":
+    "Enables durable cron history capture. Keep on when cron results should remain searchable after isolated run sessions are pruned.",
+  "agents.defaults.history.shard":
+    "Sharding controls for durable history files. Keep shards comfortably below the memory indexer's file-size ceiling so busy conversations do not silently fall out of recall.",
+  "agents.defaults.history.shard.maxBytes":
+    "Maximum shard size before history rolls to the next sequence file. Use a value safely below the memory indexer's 256 KiB file skip limit.",
+  "agents.defaults.history.shard.padWidth":
+    "Zero-padding width for shard sequence names (default: 4). Keep deterministic naming so citations remain stable.",
+  "agents.defaults.history.retention": "Retention controls for durable history maintenance sweeps.",
+  "agents.defaults.history.retention.days":
+    "Optional retention window for durable history shards, expressed in days. Omit to retain full history until an explicit purge.",
+  "agents.defaults.history.exclude":
+    "Optional durable-history excludes for specific conversations or cron jobs.",
+  "agents.defaults.history.exclude.conversations":
+    "Conversation keys that should not be written into the durable history corpus.",
+  "agents.defaults.history.exclude.jobs":
+    "Cron job ids that should not be written into the durable history corpus.",
   "agents.defaults.memorySearch.extraPaths":
     "Adds extra directories or .md files to the memory index beyond default memory files. Use this when key reference docs live elsewhere in your repo; keep paths small and intentional to avoid noisy recall.",
   "agents.defaults.memorySearch.excludePaths":

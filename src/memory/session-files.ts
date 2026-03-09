@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { isPrimarySessionTranscriptFileName } from "../config/sessions/artifacts.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
 import { redactSensitiveText } from "../logging/redact.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
@@ -25,7 +26,7 @@ export async function listSessionFilesForAgent(agentId: string): Promise<string[
     return entries
       .filter((entry) => entry.isFile())
       .map((entry) => entry.name)
-      .filter((name) => name.endsWith(".jsonl"))
+      .filter(isPrimarySessionTranscriptFileName)
       .map((name) => path.join(dir, name));
   } catch {
     return [];
@@ -78,7 +79,6 @@ export async function buildSessionEntry(absPath: string): Promise<SessionFileEnt
     const lines = raw.split("\n");
     const collected: string[] = [];
     const lineMap: number[] = [];
-    let isCronSession = false;
     for (let jsonlIdx = 0; jsonlIdx < lines.length; jsonlIdx++) {
       const line = lines[jsonlIdx];
       if (!line.trim()) {
@@ -108,16 +108,6 @@ export async function buildSessionEntry(absPath: string): Promise<SessionFileEnt
       }
       const text = extractSessionText(message.content);
       if (!text) {
-        continue;
-      }
-      // Skip cron-spawned sessions: if the first user message starts with
-      // a cron marker the entire transcript is automated boilerplate.
-      if (!isCronSession && collected.length === 0 && message.role === "user") {
-        if (text.startsWith("[cron:")) {
-          isCronSession = true;
-        }
-      }
-      if (isCronSession) {
         continue;
       }
       const safe = redactSensitiveText(text, { mode: "tools" });

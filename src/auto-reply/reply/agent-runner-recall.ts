@@ -193,7 +193,15 @@ export async function runPreTurnMemoryRecall(params: {
   return formatRecallBlock({ searchSurfaceLines, bodyLines });
 }
 
-type RecallBucket = "session" | "cron" | "config" | "log" | "memory" | "workspace" | "other";
+type RecallBucket =
+  | "history"
+  | "session"
+  | "cron"
+  | "config"
+  | "log"
+  | "memory"
+  | "workspace"
+  | "other";
 
 function selectRecallResults(
   results: MemorySearchResult[],
@@ -263,6 +271,12 @@ function formatRecallResultLine(result: MemorySearchResult): string {
 function classifyRecallBucket(value?: string): RecallBucket {
   const normalized = (value ?? "").toLowerCase();
   const basename = path.basename(normalized);
+  if (normalized.startsWith("history/channel/")) {
+    return "history";
+  }
+  if (normalized.startsWith("history/cron/")) {
+    return "cron";
+  }
   if (normalized.startsWith("sessions/")) {
     return "session";
   }
@@ -308,6 +322,8 @@ function classifyRecallBucket(value?: string): RecallBucket {
 
 function classifyRecallBucketLabel(value?: string): string {
   switch (classifyRecallBucket(value)) {
+    case "history":
+      return "History";
     case "session":
       return "Session";
     case "cron":
@@ -343,10 +359,13 @@ function buildSearchSurfaceLines(cfg: OpenClawConfig, agentId: string): string[]
   if (resolved.sources.includes("sessions")) {
     lines.push("Session transcripts included in semantic recall.");
   }
+  if (resolved.sources.includes("history")) {
+    lines.push("Durable history shards for conversations and cron runs.");
+  }
 
   const loweredPaths = resolved.extraPaths.map((entry) => entry.toLowerCase());
   if (loweredPaths.some((entry) => entry.includes("/cron/") || entry.endsWith("/cron"))) {
-    lines.push("Configured cron artifacts.");
+    lines.push("Configured cron artifacts outside the durable history corpus.");
   }
   if (
     loweredPaths.some(
@@ -357,7 +376,9 @@ function buildSearchSurfaceLines(cfg: OpenClawConfig, agentId: string): string[]
         entry.endsWith(".jsonl"),
     )
   ) {
-    lines.push("Configured operational logs and JSONL artifacts.");
+    lines.push(
+      "Configured operational logs and JSONL artifacts outside the durable history corpus.",
+    );
   }
   if (
     loweredPaths.some(

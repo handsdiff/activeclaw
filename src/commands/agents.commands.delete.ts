@@ -2,6 +2,7 @@ import { resolveAgentDir, resolveAgentWorkspaceDir } from "../agents/agent-scope
 import { writeConfigFile } from "../config/config.js";
 import { logConfigUpdated } from "../config/logging.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions.js";
+import { resolveAgentHistoryConfig } from "../history/config.js";
 import { DEFAULT_AGENT_ID, normalizeAgentId } from "../routing/session-key.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { defaultRuntime } from "../runtime.js";
@@ -68,6 +69,7 @@ export async function agentsDeleteCommand(
   const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
   const agentDir = resolveAgentDir(cfg, agentId);
   const sessionsDir = resolveSessionTranscriptsDirForAgent(agentId);
+  const historyDir = resolveAgentHistoryConfig(cfg, agentId).path;
 
   const result = pruneAgentConfig(cfg, agentId);
   await writeConfigFile(result.config);
@@ -79,6 +81,7 @@ export async function agentsDeleteCommand(
   await moveToTrash(workspaceDir, quietRuntime);
   await moveToTrash(agentDir, quietRuntime);
   await moveToTrash(sessionsDir, quietRuntime);
+  await moveToTrash(historyDir, quietRuntime);
 
   if (opts.json) {
     runtime.log(
@@ -88,6 +91,7 @@ export async function agentsDeleteCommand(
           workspace: workspaceDir,
           agentDir,
           sessionsDir,
+          historyDir,
           removedBindings: result.removedBindings,
           removedAllow: result.removedAllow,
         },

@@ -47,6 +47,10 @@ import { DEFAULT_CONTEXT_TOKENS } from "../../defaults.js";
 import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
 import { resolveImageSanitizationLimits } from "../../image-sanitization.js";
+import {
+  isInniesOpenAIResponsesBaseUrl,
+  streamInniesOpenAIResponsesSimple,
+} from "../../innies-openai-responses-stream.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
 import { normalizeProviderId, resolveDefaultModelForAgent } from "../../model-selection.js";
 import { createOllamaStreamFn, OLLAMA_NATIVE_BASE_URL } from "../../ollama-stream.js";
@@ -1227,6 +1231,15 @@ export async function runEmbeddedAttempt(
           providerBaseUrl,
         });
         activeSession.agent.streamFn = createOllamaStreamFn(ollamaBaseUrl, params.model.headers);
+      } else if (
+        params.model.api === "openai-responses" &&
+        params.provider === "openai" &&
+        isInniesOpenAIResponsesBaseUrl(params.model.baseUrl)
+      ) {
+        log.debug(
+          `[innies-stream] using Innies HTTP responses transport for model=${params.modelId}`,
+        );
+        activeSession.agent.streamFn = streamInniesOpenAIResponsesSimple;
       } else if (params.model.api === "openai-responses" && params.provider === "openai") {
         const wsApiKey = await params.authStorage.getApiKey(params.provider);
         if (wsApiKey) {

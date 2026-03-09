@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { parseByteSize } from "../cli/parse-bytes.js";
 import { parseDurationMs } from "../cli/parse-duration.js";
+import { assertHistoryPathWithinAgentScope, resolveAgentHistoryPath } from "../history/config.js";
+import { DEFAULT_AGENT_ID } from "../routing/session-key.js";
 import { ToolsSchema } from "./zod-schema.agent-runtime.js";
 import { AgentsSchema, AudioSchema, BindingsSchema, BroadcastSchema } from "./zod-schema.agents.js";
 import { ApprovalsSchema } from "./zod-schema.approvals.js";
@@ -851,31 +853,89 @@ export const OpenClawSchema = z
   .strict()
   .superRefine((cfg, ctx) => {
     const agents = cfg.agents?.list ?? [];
-    if (agents.length === 0) {
-      return;
-    }
     const agentIds = new Set(agents.map((agent) => agent.id));
 
-    const broadcast = cfg.broadcast;
-    if (!broadcast) {
-      return;
-    }
+    const memoryBackend = cfg.memory?.backend ?? "builtin";
+    const memoryProfiles = [
+      {
+        path: ["agents", "defaults"] as Array<string | number>,
+        id: "defaults",
+        historyEnabled: cfg.agents?.defaults?.history?.enabled === true,
+        sources: cfg.agents?.defaults?.memorySearch?.sources ?? [],
+      },
+      ...agents.map((agent, index) => ({
+        path: ["agents", "list", index] as Array<string | number>,
+        id: agent.id,
+        historyEnabled: agent.history?.enabled ?? cfg.agents?.defaults?.history?.enabled ?? false,
+        sources: agent.memorySearch?.sources ?? cfg.agents?.defaults?.memorySearch?.sources ?? [],
+      })),
+    ];
 
-    for (const [peerId, ids] of Object.entries(broadcast)) {
-      if (peerId === "strategy") {
+    for (const profile of memoryProfiles) {
+      const usesHistorySource = profile.sources.includes("history");
+      if (!usesHistorySource && !profile.historyEnabled) {
         continue;
       }
-      if (!Array.isArray(ids)) {
-        continue;
+      if (memoryBackend === "qmd" && profile.historyEnabled) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [...profile.path, "history", "enabled"],
+          message:
+            `history is Stage 1 sqlite-only and cannot be enabled while memory.backend="qmd" ` +
+            `(${profile.id}).`,
+        });
       }
-      for (let idx = 0; idx < ids.length; idx += 1) {
-        const agentId = ids[idx];
-        if (!agentIds.has(agentId)) {
+      if (usesHistorySource && !profile.historyEnabled) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [...profile.path, "memorySearch", "sources"],
+          message:
+            `memorySearch.sources includes "history" but history.enabled is not true for ` +
+            `${profile.id}.`,
+        });
+      }
+      const rawHistoryPath =
+        profile.id === "defaults"
+          ? cfg.agents?.defaults?.history?.path
+          : (agents.find((agent) => agent.id === profile.id)?.history?.path ??
+            cfg.agents?.defaults?.history?.path);
+      if (rawHistoryPath?.trim()) {
+        try {
+          assertHistoryPathWithinAgentScope(
+            resolveAgentHistoryPath(
+              rawHistoryPath,
+              profile.id === "defaults" ? DEFAULT_AGENT_ID : profile.id,
+            ),
+            profile.id === "defaults" ? DEFAULT_AGENT_ID : profile.id,
+          );
+        } catch (err) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
-            path: ["broadcast", peerId, idx],
-            message: `Unknown agent id "${agentId}" (not in agents.list).`,
+            path: [...profile.path, "history", "path"],
+            message: err instanceof Error ? err.message : String(err),
           });
+        }
+      }
+    }
+
+    const broadcast = cfg.broadcast;
+    if (broadcast) {
+      for (const [peerId, ids] of Object.entries(broadcast)) {
+        if (peerId === "strategy") {
+          continue;
+        }
+        if (!Array.isArray(ids)) {
+          continue;
+        }
+        for (let idx = 0; idx < ids.length; idx += 1) {
+          const agentId = ids[idx];
+          if (!agentIds.has(agentId)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["broadcast", peerId, idx],
+              message: `Unknown agent id "${agentId}" (not in agents.list).`,
+            });
+          }
         }
       }
     }

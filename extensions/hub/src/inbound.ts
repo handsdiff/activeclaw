@@ -2,6 +2,8 @@ import {
   createScopedPairingAccess,
   createNormalizedOutboundDeliverer,
   createReplyPrefixOptions,
+  emitInboundHistory,
+  emitOutboundHistory,
   formatTextWithAttachmentLinks,
   logInboundDrop,
   readStoreAllowFromForDmPolicy,
@@ -38,6 +40,9 @@ async function deliverHubReply(params: {
   payload: OutboundReplyPayload;
   target: string;
   accountId: string;
+  cfg?: OpenClawConfig;
+  agentId?: string;
+  sessionKey?: string;
   sendReply?: (target: string, text: string) => Promise<void>;
   statusSink?: (patch: { lastOutboundAt?: number }) => void;
 }) {
@@ -53,6 +58,17 @@ async function deliverHubReply(params: {
     await params.sendReply(params.target, combined);
   } else {
     await sendMessageHub(params.target, combined, { accountId: params.accountId });
+  }
+  if (params.cfg && params.agentId) {
+    await emitOutboundHistory({
+      cfg: params.cfg,
+      agentId: params.agentId,
+      surface: CHANNEL_ID,
+      conversationKey: `hub:${params.target}`,
+      text: combined,
+      accountId: params.accountId,
+      sessionKey: params.sessionKey,
+    });
   }
   params.statusSink?.({ lastOutboundAt: Date.now() });
 }
@@ -81,6 +97,16 @@ export async function handleHubInbound(params: {
   statusSink?.({ lastInboundAt: message.timestamp });
 
   const senderId = message.from;
+  const peerId = senderId;
+  const route = core.channel.routing.resolveAgentRoute({
+    cfg: config as OpenClawConfig,
+    channel: CHANNEL_ID,
+    accountId: account.accountId,
+    peer: {
+      kind: "direct",
+      id: peerId,
+    },
+  });
   const dmPolicy = account.config.dmPolicy ?? "pairing";
 
   const configAllowFrom = normalizeHubAllowFrom(account.config.allowFrom);
@@ -122,6 +148,19 @@ export async function handleHubInbound(params: {
 
   // DM policy enforcement (Hub is DM-only).
   if (dmPolicy === "disabled") {
+    await emitInboundHistory({
+      cfg: config as OpenClawConfig,
+      agentId: route.agentId,
+      surface: CHANNEL_ID,
+      conversationKey: `hub:${senderId}`,
+      disposition: "blocked_dm_policy",
+      text: rawBody,
+      ts: message.timestamp,
+      accountId: account.accountId,
+      messageId: message.messageId,
+      senderId,
+      senderLabel: senderId,
+    });
     logInboundDrop({
       log: (line) => runtime.log?.(line),
       channel: CHANNEL_ID,
@@ -149,6 +188,9 @@ export async function handleHubInbound(params: {
               payload: { text: reply },
               target: senderId,
               accountId: account.accountId,
+              cfg: config as OpenClawConfig,
+              agentId: route.agentId,
+              sessionKey: route.sessionKey,
               sendReply: params.sendReply,
               statusSink,
             });
@@ -157,6 +199,19 @@ export async function handleHubInbound(params: {
           }
         }
       }
+      await emitInboundHistory({
+        cfg: config as OpenClawConfig,
+        agentId: route.agentId,
+        surface: CHANNEL_ID,
+        conversationKey: `hub:${senderId}`,
+        disposition: dmPolicy === "pairing" ? "paired_prompted" : "blocked_dm_policy",
+        text: rawBody,
+        ts: message.timestamp,
+        accountId: account.accountId,
+        messageId: message.messageId,
+        senderId,
+        senderLabel: senderId,
+      });
       logInboundDrop({
         log: (line) => runtime.log?.(line),
         channel: CHANNEL_ID,
@@ -168,6 +223,19 @@ export async function handleHubInbound(params: {
   }
 
   if (commandGate.shouldBlock) {
+    await emitInboundHistory({
+      cfg: config as OpenClawConfig,
+      agentId: route.agentId,
+      surface: CHANNEL_ID,
+      conversationKey: `hub:${senderId}`,
+      disposition: "blocked_command_auth",
+      text: rawBody,
+      ts: message.timestamp,
+      accountId: account.accountId,
+      messageId: message.messageId,
+      senderId,
+      senderLabel: senderId,
+    });
     logInboundDrop({
       log: (line) => runtime.log?.(line),
       channel: CHANNEL_ID,
@@ -176,17 +244,6 @@ export async function handleHubInbound(params: {
     });
     return;
   }
-
-  const peerId = senderId;
-  const route = core.channel.routing.resolveAgentRoute({
-    cfg: config as OpenClawConfig,
-    channel: CHANNEL_ID,
-    accountId: account.accountId,
-    peer: {
-      kind: "direct",
-      id: peerId,
-    },
-  });
 
   const storePath = core.channel.session.resolveStorePath(config.session?.store, {
     agentId: route.agentId,
@@ -246,6 +303,9 @@ export async function handleHubInbound(params: {
       payload,
       target: peerId,
       accountId: account.accountId,
+      cfg: config as OpenClawConfig,
+      agentId: route.agentId,
+      sessionKey: route.sessionKey,
       sendReply: params.sendReply,
       statusSink,
     });

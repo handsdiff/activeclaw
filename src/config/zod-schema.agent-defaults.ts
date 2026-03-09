@@ -13,6 +13,7 @@ import {
   HumanDelaySchema,
   TypingModeSchema,
 } from "./zod-schema.core.js";
+import { HistorySchema } from "./zod-schema.history.js";
 
 export const AgentDefaultsSchema = z
   .object({
@@ -51,6 +52,7 @@ export const AgentDefaultsSchema = z
     contextTokens: z.number().int().positive().optional(),
     cliBackends: z.record(z.string(), CliBackendSchema).optional(),
     memorySearch: MemorySearchSchema,
+    history: HistorySchema,
     memoryRecall: z
       .object({
         enabled: z.boolean().optional(),

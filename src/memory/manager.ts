@@ -6,6 +6,8 @@ import { resolveAgentDir, resolveAgentWorkspaceDir } from "../agents/agent-scope
 import type { ResolvedMemorySearchConfig } from "../agents/memory-search.js";
 import { resolveMemorySearchConfig } from "../agents/memory-search.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
+import { resolveAgentHistoryConfig } from "../history/config.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import {
   createEmbeddingProvider,
@@ -120,12 +122,14 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
   };
   protected vectorReady: Promise<boolean> | null = null;
   protected watcher: FSWatcher | null = null;
+  protected historyWatcher: FSWatcher | null = null;
   protected watchTimer: NodeJS.Timeout | null = null;
   protected sessionWatchTimer: NodeJS.Timeout | null = null;
   protected sessionUnsubscribe: (() => void) | null = null;
   protected intervalTimer: NodeJS.Timeout | null = null;
   protected closed = false;
   protected dirty = false;
+  protected historyDirty = false;
   protected sessionsDirty = false;
   protected sessionsDirtyFiles = new Set<string>();
   protected sessionPendingFiles = new Set<string>();
@@ -245,10 +249,16 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       this.vector.dims = meta.vectorDims;
     }
     this.ensureWatcher();
+    this.ensureHistoryWatcher();
     this.ensureSessionListener();
     this.ensureIntervalSync();
+    this.ensureHistoryMaintenance();
+    void this.runHistoryRetentionSweep().catch((err) => {
+      log.warn(`history retention sweep failed for ${this.agentId}`, { err: String(err) });
+    });
     const statusOnly = params.purpose === "status";
     this.dirty = this.sources.has("memory") && (statusOnly ? !meta : true);
+    this.historyDirty = this.sources.has("history") && (statusOnly ? !meta : true);
     this.batch = this.resolveBatchConfig();
   }
 
@@ -715,22 +725,47 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     if (!rawPath) {
       throw new Error("path required");
     }
-    const absPath = path.isAbsolute(rawPath)
-      ? path.resolve(rawPath)
-      : path.resolve(this.workspaceDir, rawPath);
+    const normalizedRawPath = rawPath.replace(/\\/g, "/");
+    const sessionsDir = resolveSessionTranscriptsDirForAgent(this.agentId);
+    const historyRoot = resolveAgentHistoryConfig(this.cfg, this.agentId).path;
+    const absPath = (() => {
+      if (path.isAbsolute(rawPath)) {
+        return path.resolve(rawPath);
+      }
+      if (normalizedRawPath.startsWith("sessions/")) {
+        return path.resolve(sessionsDir, normalizedRawPath.slice("sessions/".length));
+      }
+      if (normalizedRawPath.startsWith("history/")) {
+        return path.resolve(historyRoot, normalizedRawPath.slice("history/".length));
+      }
+      return path.resolve(this.workspaceDir, rawPath);
+    })();
     const excludedPaths = normalizeExcludedMemoryPaths(
       this.workspaceDir,
       this.settings.excludePaths,
     );
-    if (isExcludedMemoryPath(absPath, excludedPaths)) {
-      throw new Error("path required");
-    }
     const relPath = path.relative(this.workspaceDir, absPath).replace(/\\/g, "/");
     const inWorkspace =
       relPath.length > 0 && !relPath.startsWith("..") && !path.isAbsolute(relPath);
     const allowedWorkspace = inWorkspace && isMemoryPath(relPath);
+    const resolvedSessionsDir = path.resolve(sessionsDir);
+    const resolvedHistoryRoot = path.resolve(historyRoot);
+    const allowedSessions =
+      this.sources.has("sessions") &&
+      (absPath === resolvedSessionsDir || absPath.startsWith(`${resolvedSessionsDir}${path.sep}`));
+    const allowedHistory =
+      this.sources.has("history") &&
+      (absPath === resolvedHistoryRoot || absPath.startsWith(`${resolvedHistoryRoot}${path.sep}`));
+    if (!allowedSessions && !allowedHistory && isExcludedMemoryPath(absPath, excludedPaths)) {
+      throw new Error("path required");
+    }
     let allowedAdditional = false;
-    if (!allowedWorkspace && this.settings.extraPaths.length > 0) {
+    if (
+      !allowedWorkspace &&
+      !allowedSessions &&
+      !allowedHistory &&
+      this.settings.extraPaths.length > 0
+    ) {
       const additionalPaths = normalizeExtraMemoryPaths(
         this.workspaceDir,
         this.settings.extraPaths,
@@ -757,7 +792,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
         } catch {}
       }
     }
-    if (!allowedWorkspace && !allowedAdditional) {
+    if (!allowedWorkspace && !allowedSessions && !allowedHistory && !allowedAdditional) {
       throw new Error("path required");
     }
     if (!isIndexedTextPath(absPath)) {
@@ -765,7 +800,12 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     }
     const statResult = await statRegularFile(absPath);
     if (statResult.missing) {
-      return { text: "", path: relPath };
+      const missingPath = allowedSessions
+        ? path.join("sessions", path.relative(sessionsDir, absPath)).replace(/\\/g, "/")
+        : allowedHistory
+          ? path.join("history", path.relative(historyRoot, absPath)).replace(/\\/g, "/")
+          : relPath;
+      return { text: "", path: missingPath };
     }
     let content: string;
     try {
@@ -777,13 +817,23 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       throw err;
     }
     if (!params.from && !params.lines) {
-      return { text: content, path: relPath };
+      const resolvedPath = allowedSessions
+        ? path.join("sessions", path.relative(sessionsDir, absPath)).replace(/\\/g, "/")
+        : allowedHistory
+          ? path.join("history", path.relative(historyRoot, absPath)).replace(/\\/g, "/")
+          : relPath;
+      return { text: content, path: resolvedPath };
     }
     const lines = content.split("\n");
     const start = Math.max(1, params.from ?? 1);
     const count = Math.max(1, params.lines ?? lines.length);
     const slice = lines.slice(start - 1, start - 1 + count);
-    return { text: slice.join("\n"), path: relPath };
+    const resolvedPath = allowedSessions
+      ? path.join("sessions", path.relative(sessionsDir, absPath)).replace(/\\/g, "/")
+      : allowedHistory
+        ? path.join("history", path.relative(historyRoot, absPath)).replace(/\\/g, "/")
+        : relPath;
+    return { text: slice.join("\n"), path: resolvedPath };
   }
 
   status(): MemoryProviderStatus {
@@ -947,9 +997,17 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       clearInterval(this.intervalTimer);
       this.intervalTimer = null;
     }
+    if (this.historyMaintenanceTimer) {
+      clearInterval(this.historyMaintenanceTimer);
+      this.historyMaintenanceTimer = null;
+    }
     if (this.watcher) {
       await this.watcher.close();
       this.watcher = null;
+    }
+    if (this.historyWatcher) {
+      await this.historyWatcher.close();
+      this.historyWatcher = null;
     }
     if (this.sessionUnsubscribe) {
       this.sessionUnsubscribe();

@@ -149,6 +149,19 @@ const coreEntries: CoreCliEntry[] = [
   {
     commands: [
       {
+        name: "history",
+        description: "Manage the durable searchable history corpus",
+        hasSubcommands: true,
+      },
+    ],
+    register: async ({ program }) => {
+      const mod = await import("../history-cli.js");
+      mod.registerHistoryCli(program);
+    },
+  },
+  {
+    commands: [
+      {
         name: "agent",
         description: "Run one agent turn via the Gateway",
         hasSubcommands: false,

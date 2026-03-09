@@ -8,6 +8,8 @@ import { resolveAgentDir } from "../agents/agent-scope.js";
 import { ResolvedMemorySearchConfig } from "../agents/memory-search.js";
 import { type OpenClawConfig } from "../config/config.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
+import { resolveAgentHistoryConfig } from "../history/config.js";
+import { sweepAgentHistoryRetention } from "../history/maintenance.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { resolveUserPath } from "../utils.js";
@@ -26,6 +28,8 @@ import {
   type VoyageEmbeddingClient,
 } from "./embeddings.js";
 import { isFileMissingError } from "./fs-utils.js";
+import type { HistoryFileEntry } from "./history-files.js";
+import { buildHistoryEntry, listHistoryFilesForAgent } from "./history-files.js";
 import {
   buildFileEntry,
   ensureDir,
@@ -71,6 +75,7 @@ const FTS_TABLE = "chunks_fts";
 const EMBEDDING_CACHE_TABLE = "embedding_cache";
 const SESSION_DIRTY_DEBOUNCE_MS = 5000;
 const SESSION_DELTA_READ_CHUNK_BYTES = 64 * 1024;
+const HISTORY_RETENTION_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const VECTOR_LOAD_TIMEOUT_MS = 30_000;
 const IGNORED_MEMORY_WATCH_DIR_NAMES = new Set([
   ".git",
@@ -125,13 +130,16 @@ export abstract class MemoryManagerSyncOps {
   } = { enabled: false, available: false };
   protected vectorReady: Promise<boolean> | null = null;
   protected watcher: FSWatcher | null = null;
+  protected historyWatcher: FSWatcher | null = null;
   protected watchTimer: NodeJS.Timeout | null = null;
   protected sessionWatchTimer: NodeJS.Timeout | null = null;
   protected sessionUnsubscribe: (() => void) | null = null;
   protected fallbackReason?: string;
   protected intervalTimer: NodeJS.Timeout | null = null;
+  protected historyMaintenanceTimer: NodeJS.Timeout | null = null;
   protected closed = false;
   protected dirty = false;
+  protected historyDirty = false;
   protected sessionsDirty = false;
   protected sessionsDirtyFiles = new Set<string>();
   protected sessionPendingFiles = new Set<string>();
@@ -141,6 +149,7 @@ export abstract class MemoryManagerSyncOps {
   >();
   protected providerUnavailableReason?: string;
   private lastMetaSerialized: string | null = null;
+  private historyRetentionSweepInFlight: Promise<void> | null = null;
 
   protected abstract readonly cache: { enabled: boolean; maxEntries?: number };
   protected abstract db: DatabaseSync;
@@ -158,7 +167,7 @@ export abstract class MemoryManagerSyncOps {
   protected abstract getIndexConcurrency(): number;
   protected abstract pruneEmbeddingCacheIfNeeded(): void;
   protected abstract indexFile(
-    entry: MemoryFileEntry | SessionFileEntry,
+    entry: MemoryFileEntry | SessionFileEntry | HistoryFileEntry,
     options: { source: MemorySource; content?: string },
   ): Promise<void>;
   protected onSafeReindexBuildStart(_params: {
@@ -479,6 +488,50 @@ export abstract class MemoryManagerSyncOps {
     this.watcher.on("unlink", markDirty);
   }
 
+  protected ensureHistoryWatcher() {
+    if (!this.sources.has("history") || !this.settings.sync.watch || this.historyWatcher) {
+      return;
+    }
+    const history = resolveAgentHistoryConfig(this.cfg, this.agentId);
+    if (!history.enabled) {
+      return;
+    }
+    this.historyWatcher = chokidar.watch(history.path, {
+      ignoreInitial: true,
+      ignored: (watchPath, stats) => {
+        const normalized = path.normalize(String(watchPath));
+        const stat = (() => {
+          if (stats) {
+            return stats;
+          }
+          try {
+            return fsSync.lstatSync(normalized);
+          } catch {
+            return null;
+          }
+        })();
+        if (stat?.isSymbolicLink?.()) {
+          return true;
+        }
+        if (stat?.isDirectory?.()) {
+          return false;
+        }
+        return !isIndexedTextPath(normalized);
+      },
+      awaitWriteFinish: {
+        stabilityThreshold: this.settings.sync.watchDebounceMs,
+        pollInterval: 100,
+      },
+    });
+    const markDirty = () => {
+      this.historyDirty = true;
+      this.scheduleWatchSync();
+    };
+    this.historyWatcher.on("add", markDirty);
+    this.historyWatcher.on("change", markDirty);
+    this.historyWatcher.on("unlink", markDirty);
+  }
+
   protected ensureSessionListener() {
     if (!this.sources.has("sessions") || this.sessionUnsubscribe) {
       return;
@@ -674,8 +727,48 @@ export abstract class MemoryManagerSyncOps {
     }, ms);
   }
 
+  protected ensureHistoryMaintenance() {
+    if (this.historyMaintenanceTimer) {
+      return;
+    }
+    const history = resolveAgentHistoryConfig(this.cfg, this.agentId);
+    if (!history.enabled || history.retention.days == null) {
+      return;
+    }
+    this.historyMaintenanceTimer = setInterval(() => {
+      void this.runHistoryRetentionSweep().catch((err) => {
+        log.warn(`history retention sweep failed for ${this.agentId}`, { err: String(err) });
+      });
+    }, HISTORY_RETENTION_SWEEP_INTERVAL_MS);
+  }
+
+  protected async runHistoryRetentionSweep(): Promise<void> {
+    if (this.closed) {
+      return;
+    }
+    const existing = this.historyRetentionSweepInFlight;
+    if (existing) {
+      return await existing;
+    }
+    const task = (async () => {
+      await sweepAgentHistoryRetention({
+        cfg: this.cfg,
+        agentId: this.agentId,
+      });
+    })().finally(() => {
+      if (this.historyRetentionSweepInFlight === task) {
+        this.historyRetentionSweepInFlight = null;
+      }
+    });
+    this.historyRetentionSweepInFlight = task;
+    await task;
+  }
+
   private scheduleWatchSync() {
-    if (!this.sources.has("memory") || !this.settings.sync.watch) {
+    if (!this.settings.sync.watch) {
+      return;
+    }
+    if (!this.sources.has("memory") && !this.sources.has("history")) {
       return;
     }
     if (this.watchTimer) {
@@ -857,6 +950,80 @@ export abstract class MemoryManagerSyncOps {
     }
   }
 
+  private async syncHistoryFiles(params: {
+    needsFullReindex: boolean;
+    progress?: MemorySyncProgressState;
+  }) {
+    const files = await listHistoryFilesForAgent(this.cfg, this.agentId);
+    const historyRoot = resolveAgentHistoryConfig(this.cfg, this.agentId).path;
+    const activePaths = new Set(
+      files.map((file) =>
+        path.join("history", path.relative(historyRoot, file)).replace(/\\/g, "/"),
+      ),
+    );
+    log.debug("memory sync: indexing history files", {
+      files: files.length,
+      needsFullReindex: params.needsFullReindex,
+      batch: this.batch.enabled,
+      concurrency: this.getIndexConcurrency(),
+      mode: this.provider ? "hybrid" : "fts-only",
+    });
+    if (params.progress) {
+      params.progress.total += files.length;
+      params.progress.report({
+        completed: params.progress.completed,
+        total: params.progress.total,
+        label: this.batch.enabled ? "Indexing history files (batch)..." : "Indexing history files…",
+      });
+    }
+
+    const tasks = files.map((absPath) => async () => {
+      const entry = await buildHistoryEntry(absPath, this.cfg, this.agentId);
+      if (!entry) {
+        if (params.progress) {
+          params.progress.completed += 1;
+          params.progress.report({
+            completed: params.progress.completed,
+            total: params.progress.total,
+          });
+        }
+        return;
+      }
+      const record = this.db
+        .prepare(`SELECT hash FROM files WHERE path = ? AND source = ?`)
+        .get(entry.path, "history") as { hash: string } | undefined;
+      if (!params.needsFullReindex && record?.hash === entry.hash) {
+        if (params.progress) {
+          params.progress.completed += 1;
+          params.progress.report({
+            completed: params.progress.completed,
+            total: params.progress.total,
+          });
+        }
+        return;
+      }
+      await this.indexFile(entry, { source: "history", content: entry.content });
+      if (params.progress) {
+        params.progress.completed += 1;
+        params.progress.report({
+          completed: params.progress.completed,
+          total: params.progress.total,
+        });
+      }
+    });
+    await runWithConcurrency(tasks, this.getIndexConcurrency());
+
+    const staleRows = this.db
+      .prepare(`SELECT path FROM files WHERE source = ?`)
+      .all("history") as Array<{ path: string }>;
+    for (const stale of staleRows) {
+      if (activePaths.has(stale.path)) {
+        continue;
+      }
+      this.deleteIndexedPathRows(stale.path, "history");
+    }
+  }
+
   private createSyncProgress(
     onProgress: (update: MemorySyncProgressUpdate) => void,
   ): MemorySyncProgressState {
@@ -932,6 +1099,8 @@ export abstract class MemoryManagerSyncOps {
       const shouldSyncMemory =
         this.sources.has("memory") && (params?.force || needsFullReindex || this.dirty);
       const shouldSyncSessions = this.shouldSyncSessions(params, needsFullReindex);
+      const shouldSyncHistory =
+        this.sources.has("history") && (params?.force || needsFullReindex || this.historyDirty);
 
       if (shouldSyncMemory) {
         await this.syncMemoryFiles({ needsFullReindex, progress: progress ?? undefined });
@@ -946,6 +1115,11 @@ export abstract class MemoryManagerSyncOps {
         this.sessionsDirty = true;
       } else {
         this.sessionsDirty = false;
+      }
+
+      if (shouldSyncHistory) {
+        await this.syncHistoryFiles({ needsFullReindex, progress: progress ?? undefined });
+        this.historyDirty = false;
       }
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
@@ -1111,6 +1285,7 @@ export abstract class MemoryManagerSyncOps {
         { reason: params.reason, force: params.force },
         true,
       );
+      const shouldSyncHistory = this.sources.has("history");
 
       if (shouldSyncMemory) {
         await this.syncMemoryFiles({ needsFullReindex: true, progress: params.progress });
@@ -1125,6 +1300,11 @@ export abstract class MemoryManagerSyncOps {
         this.sessionsDirty = true;
       } else {
         this.sessionsDirty = false;
+      }
+
+      if (shouldSyncHistory) {
+        await this.syncHistoryFiles({ needsFullReindex: true, progress: params.progress });
+        this.historyDirty = false;
       }
 
       nextMeta = {
@@ -1185,6 +1365,7 @@ export abstract class MemoryManagerSyncOps {
       { reason: params.reason, force: params.force },
       true,
     );
+    const shouldSyncHistory = this.sources.has("history");
 
     if (shouldSyncMemory) {
       await this.syncMemoryFiles({ needsFullReindex: true, progress: params.progress });
@@ -1199,6 +1380,11 @@ export abstract class MemoryManagerSyncOps {
       this.sessionsDirty = true;
     } else {
       this.sessionsDirty = false;
+    }
+
+    if (shouldSyncHistory) {
+      await this.syncHistoryFiles({ needsFullReindex: true, progress: params.progress });
+      this.historyDirty = false;
     }
 
     const nextMeta: MemoryIndexMeta = {
@@ -1263,7 +1449,10 @@ export abstract class MemoryManagerSyncOps {
 
   private resolveConfiguredSourcesForMeta(): MemorySource[] {
     const normalized = Array.from(this.sources)
-      .filter((source): source is MemorySource => source === "memory" || source === "sessions")
+      .filter(
+        (source): source is MemorySource =>
+          source === "memory" || source === "sessions" || source === "history",
+      )
       .toSorted();
     return normalized.length > 0 ? normalized : ["memory"];
   }
@@ -1276,7 +1465,8 @@ export abstract class MemoryManagerSyncOps {
     const normalized = Array.from(
       new Set(
         meta.sources.filter(
-          (source): source is MemorySource => source === "memory" || source === "sessions",
+          (source): source is MemorySource =>
+            source === "memory" || source === "sessions" || source === "history",
         ),
       ),
     ).toSorted();

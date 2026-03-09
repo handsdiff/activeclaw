@@ -18,6 +18,7 @@ import {
   resolveMirroredTranscriptText,
 } from "../../config/sessions.js";
 import type { sendMessageDiscord } from "../../discord/send.js";
+import { emitOutboundHistory } from "../../history/emit.js";
 import { fireAndForgetHook } from "../../hooks/fire-and-forget.js";
 import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
 import {
@@ -330,6 +331,8 @@ function buildPayloadSummary(payload: ReplyPayload): NormalizedOutboundPayload {
 }
 
 function createMessageSentEmitter(params: {
+  cfg: OpenClawConfig;
+  agentId?: string;
   hookRunner: ReturnType<typeof getGlobalHookRunner>;
   channel: Exclude<OutboundChannel, "none">;
   to: string;
@@ -341,9 +344,6 @@ function createMessageSentEmitter(params: {
   const hasMessageSentHooks = params.hookRunner?.hasHooks("message_sent") ?? false;
   const canEmitInternalHook = Boolean(params.sessionKeyForInternalHooks);
   const emitMessageSent = (event: MessageSentEvent) => {
-    if (!hasMessageSentHooks && !canEmitInternalHook) {
-      return;
-    }
     const canonical = buildCanonicalSentMessageHookContext({
       to: params.to,
       content: event.content,
@@ -368,23 +368,40 @@ function createMessageSentEmitter(params: {
         },
       );
     }
-    if (!canEmitInternalHook) {
-      return;
-    }
-    fireAndForgetHook(
-      triggerInternalHook(
-        createInternalHookEvent(
-          "message",
-          "sent",
-          params.sessionKeyForInternalHooks!,
-          toInternalMessageSentContext(canonical),
+    if (canEmitInternalHook) {
+      fireAndForgetHook(
+        triggerInternalHook(
+          createInternalHookEvent(
+            "message",
+            "sent",
+            params.sessionKeyForInternalHooks!,
+            toInternalMessageSentContext(canonical),
+          ),
         ),
-      ),
-      "deliverOutboundPayloads: message:sent internal hook failed",
-      (message) => {
-        log.warn(message);
-      },
-    );
+        "deliverOutboundPayloads: message:sent internal hook failed",
+        (message) => {
+          log.warn(message);
+        },
+      );
+    }
+    if (event.success && params.agentId && event.content.trim()) {
+      fireAndForgetHook(
+        emitOutboundHistory({
+          cfg: params.cfg,
+          agentId: params.agentId,
+          surface: params.channel,
+          conversationKey: params.mirrorGroupId ?? params.to,
+          text: event.content,
+          accountId: params.accountId,
+          messageId: event.messageId,
+          sessionKey: params.sessionKeyForInternalHooks,
+        }),
+        "deliverOutboundPayloads: durable outbound history write failed",
+        (message) => {
+          log.warn(message);
+        },
+      );
+    }
   };
   return { emitMessageSent, hasMessageSentHooks };
 }
@@ -668,6 +685,8 @@ async function deliverOutboundPayloadsCore(
   const mirrorIsGroup = params.mirror?.isGroup;
   const mirrorGroupId = params.mirror?.groupId;
   const { emitMessageSent, hasMessageSentHooks } = createMessageSentEmitter({
+    cfg: params.cfg,
+    agentId: params.session?.agentId,
     hookRunner,
     channel,
     to,

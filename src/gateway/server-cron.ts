@@ -19,6 +19,7 @@ import {
 import { CronService } from "../cron/service.js";
 import { resolveCronStorePath } from "../cron/store.js";
 import { normalizeHttpWebhookUrl } from "../cron/webhook-url.js";
+import { emitCronHistory } from "../history/emit.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { runHeartbeatOnce } from "../infra/heartbeat-runner.js";
 import { requestHeartbeatNow } from "../infra/heartbeat-wake.js";
@@ -357,10 +358,36 @@ export function buildGatewayCronService(params: {
     log: getChildLogger({ module: "cron", storePath }),
     onEvent: (evt) => {
       params.broadcast("cron", evt, { dropIfSlow: true });
+      const job = cron.getJob(evt.jobId);
+      if (job && (evt.action === "started" || evt.action === "finished")) {
+        const { agentId, cfg: runtimeConfig } = resolveCronAgent(job.agentId);
+        const inputText =
+          job.payload.kind === "agentTurn"
+            ? job.payload.message
+            : job.payload.kind === "systemEvent"
+              ? job.payload.text
+              : undefined;
+        void emitCronHistory({
+          cfg: runtimeConfig,
+          agentId,
+          jobId: job.id,
+          phase: evt.action === "started" ? "started" : "finished",
+          ts: evt.runAtMs,
+          status: evt.status,
+          inputText,
+          outputText: evt.summary,
+          error: evt.error,
+          delivered: evt.delivered,
+          deliveryStatus: evt.deliveryStatus,
+          sessionKey: evt.sessionKey,
+          sessionId: evt.sessionId,
+        }).catch((err) => {
+          cronLogger.warn({ err: String(err), jobId: evt.jobId }, "cron: history write failed");
+        });
+      }
       if (evt.action === "finished") {
         const webhookToken = trimToOptionalString(params.cfg.cron?.webhookToken);
         const legacyWebhook = trimToOptionalString(params.cfg.cron?.webhook);
-        const job = cron.getJob(evt.jobId);
         const legacyNotify = (job as { notify?: unknown } | undefined)?.notify === true;
         const webhookTarget = resolveCronWebhookTarget({
           delivery:

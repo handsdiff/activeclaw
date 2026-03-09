@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { appendChannelHistoryRecord } from "../history/writer.js";
 import { getMemorySearchManager, type MemoryIndexManager } from "./index.js";
 import "./test-runtime-mocks.js";
 
@@ -120,8 +121,9 @@ describe("memory index", () => {
     storePath: string;
     extraPaths?: string[];
     excludePaths?: string[];
-    sources?: Array<"memory" | "sessions">;
+    sources?: Array<"memory" | "sessions" | "history">;
     sessionMemory?: boolean;
+    historyEnabled?: boolean;
     model?: string;
     vectorEnabled?: boolean;
     cacheEnabled?: boolean;
@@ -132,6 +134,7 @@ describe("memory index", () => {
       agents: {
         defaults: {
           workspace: workspaceDir,
+          history: params.historyEnabled ? { enabled: true } : undefined,
           memorySearch: {
             provider: "openai",
             model: params.model ?? "mock-embed",
@@ -350,6 +353,167 @@ describe("memory index", () => {
       expect(
         status.sourceCounts?.find((entry) => entry.source === "sessions")?.chunks ?? 0,
       ).toBeGreaterThan(0);
+      await manager.close?.();
+    } finally {
+      if (previousStateDir === undefined) {
+        delete process.env.OPENCLAW_STATE_DIR;
+      } else {
+        process.env.OPENCLAW_STATE_DIR = previousStateDir;
+      }
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores archived session transcripts", async () => {
+    const stateDir = path.join(fixtureRoot, "state-session-archive");
+    const sessionDir = path.join(stateDir, "agents", "main", "sessions");
+    await fs.rm(stateDir, { recursive: true, force: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+    await fs.writeFile(
+      path.join(sessionDir, "session-archived.jsonl.deleted.2026-03-07T12-00-00.000Z"),
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "archived transcript alpha marker" }],
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "archived transcript beta marker" }],
+          },
+        }),
+      ].join("\n"),
+    );
+
+    const previousStateDir = process.env.OPENCLAW_STATE_DIR;
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+
+    try {
+      const cfg = createCfg({
+        storePath: path.join(workspaceDir, "index-session-archive.sqlite"),
+        sources: ["memory", "sessions"],
+        sessionMemory: true,
+      });
+      const result = await getMemorySearchManager({ cfg, agentId: "main" });
+      const manager = requireManager(result);
+      await manager.sync?.({ reason: "test" });
+      const status = manager.status();
+      expect(status.sourceCounts?.find((entry) => entry.source === "sessions")?.files ?? 0).toBe(0);
+      const results = await manager.search("archived transcript beta marker");
+      expect(
+        results.some((result) =>
+          result.path.includes("session-archived.jsonl.deleted.2026-03-07T12-00-00.000Z"),
+        ),
+      ).toBe(false);
+      await manager.close?.();
+    } finally {
+      if (previousStateDir === undefined) {
+        delete process.env.OPENCLAW_STATE_DIR;
+      } else {
+        process.env.OPENCLAW_STATE_DIR = previousStateDir;
+      }
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("indexes durable history shards as a first-class source", async () => {
+    const stateDir = path.join(fixtureRoot, "state-history");
+    const previousStateDir = process.env.OPENCLAW_STATE_DIR;
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    await fs.rm(stateDir, { recursive: true, force: true });
+
+    try {
+      const cfg = createCfg({
+        storePath: path.join(workspaceDir, "index-history.sqlite"),
+        sources: ["memory", "history"],
+        historyEnabled: true,
+      });
+      await appendChannelHistoryRecord({
+        cfg,
+        agentId: "main",
+        surface: "telegram",
+        conversationKey: "telegram:123",
+        record: {
+          kind: "channel_message",
+          ts: "2026-03-08T01:23:06.600Z",
+          surface: "telegram",
+          conversationId: "telegram:123",
+          direction: "inbound",
+          disposition: "processed",
+          messageId: "8030",
+          senderId: "123",
+          senderLabel: "Tester",
+          text: "history shard alpha marker",
+          sessionKey: "agent:main:telegram:direct:123",
+        },
+      });
+
+      const result = await getMemorySearchManager({ cfg, agentId: "main" });
+      const manager = requireManager(result);
+      await manager.sync?.({ reason: "test" });
+      const status = manager.status();
+      expect(status.sourceCounts?.find((entry) => entry.source === "history")?.files).toBe(1);
+      expect(
+        status.sourceCounts?.find((entry) => entry.source === "history")?.chunks ?? 0,
+      ).toBeGreaterThan(0);
+      const results = await manager.search("history shard alpha marker");
+      expect(results.some((entry) => entry.path.startsWith("history/channel/"))).toBe(true);
+      await manager.close?.();
+    } finally {
+      if (previousStateDir === undefined) {
+        delete process.env.OPENCLAW_STATE_DIR;
+      } else {
+        process.env.OPENCLAW_STATE_DIR = previousStateDir;
+      }
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("indexes cron session transcripts", async () => {
+    const stateDir = path.join(fixtureRoot, "state-cron-sessions");
+    const sessionDir = path.join(stateDir, "agents", "main", "sessions");
+    await fs.rm(stateDir, { recursive: true, force: true });
+    await fs.mkdir(sessionDir, { recursive: true });
+    await fs.writeFile(
+      path.join(sessionDir, "cron-run.jsonl"),
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "[cron:job-digest] cron alpha marker" }],
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "cron beta marker" }],
+          },
+        }),
+      ].join("\n"),
+    );
+
+    const previousStateDir = process.env.OPENCLAW_STATE_DIR;
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+
+    try {
+      const cfg = createCfg({
+        storePath: path.join(workspaceDir, "index-cron-sessions.sqlite"),
+        sources: ["memory", "sessions"],
+        sessionMemory: true,
+      });
+      const result = await getMemorySearchManager({ cfg, agentId: "main" });
+      const manager = requireManager(result);
+      await manager.sync?.({ reason: "test" });
+      const status = manager.status();
+      expect(status.sourceCounts?.find((entry) => entry.source === "sessions")?.files).toBe(1);
+      const results = await manager.search("cron beta marker");
+      expect(results.some((result) => result.path.includes("cron-run.jsonl"))).toBe(true);
       await manager.close?.();
     } finally {
       if (previousStateDir === undefined) {

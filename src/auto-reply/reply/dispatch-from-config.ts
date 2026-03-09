@@ -2,6 +2,7 @@ import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { loadSessionStore, resolveStorePath, type SessionEntry } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
+import { emitInboundHistoryFromContext } from "../../history/emit.js";
 import { fireAndForgetHook } from "../../hooks/fire-and-forget.js";
 import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
 import {
@@ -111,6 +112,7 @@ export async function dispatchReplyFromConfig(params: {
   const chatId = ctx.To ?? ctx.From;
   const messageId = ctx.MessageSid ?? ctx.MessageSidFirst ?? ctx.MessageSidLast;
   const sessionKey = ctx.SessionKey;
+  const agentId = sessionKey ? resolveSessionAgentId({ sessionKey, config: cfg }) : undefined;
   const startTime = diagnosticsEnabled ? Date.now() : 0;
   const canTrackSession = diagnosticsEnabled && Boolean(sessionKey);
 
@@ -160,8 +162,31 @@ export async function dispatchReplyFromConfig(params: {
   };
 
   if (shouldSkipDuplicateInbound(ctx)) {
+    if (agentId) {
+      fireAndForgetHook(
+        emitInboundHistoryFromContext({
+          cfg,
+          agentId,
+          ctx,
+          disposition: "dropped_duplicate",
+        }),
+        "dispatch-from-config: durable duplicate inbound history write failed",
+      );
+    }
     recordProcessed("skipped", { reason: "duplicate" });
     return { queuedFinal: false, counts: dispatcher.getQueuedCounts() };
+  }
+
+  if (agentId) {
+    fireAndForgetHook(
+      emitInboundHistoryFromContext({
+        cfg,
+        agentId,
+        ctx,
+        disposition: "processed",
+      }),
+      "dispatch-from-config: durable inbound history write failed",
+    );
   }
 
   const sessionStoreEntry = resolveSessionStoreEntry(ctx, cfg);

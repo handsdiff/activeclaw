@@ -14,6 +14,7 @@ export * from "./types.cron.js";
 export * from "./types.discord.js";
 export * from "./types.googlechat.js";
 export * from "./types.gateway.js";
+export * from "./types.history.js";
 export * from "./types.hooks.js";
 export * from "./types.imessage.js";
 export * from "./types.irc.js";

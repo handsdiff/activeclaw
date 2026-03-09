@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import { resolveDefaultAgentHistoryDir } from "../history/config.js";
+import { appendChannelHistoryRecord } from "../history/writer.js";
 import { resetEmbeddingMocks } from "./embedding.test-mocks.js";
 import type { MemoryIndexManager } from "./index.js";
 import { getRequiredMemoryIndexManager } from "./test-manager-helpers.js";
@@ -12,11 +14,14 @@ function createMemorySearchCfg(options: {
   indexPath: string;
   extraPaths?: string[];
   excludePaths?: string[];
+  sources?: Array<"memory" | "sessions" | "history">;
+  historyEnabled?: boolean;
 }): OpenClawConfig {
   return {
     agents: {
       defaults: {
         workspace: options.workspaceDir,
+        history: options.historyEnabled ? { enabled: true } : undefined,
         memorySearch: {
           provider: "openai",
           model: "mock-embed",
@@ -24,6 +29,7 @@ function createMemorySearchCfg(options: {
           cache: { enabled: false },
           query: { minScore: 0, hybrid: { enabled: false } },
           sync: { watch: false, onSessionStart: false, onSearch: false },
+          sources: options.sources,
           extraPaths: options.extraPaths,
           excludePaths: options.excludePaths,
         },
@@ -179,5 +185,58 @@ describe("MemoryIndexManager.readFile", () => {
     });
 
     await expect(manager.readFile({ relPath })).rejects.toThrow("path required");
+  });
+
+  it("allows reading durable history shards via history/ paths", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-history-read-"));
+    const previousStateDir = process.env.OPENCLAW_STATE_DIR;
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+
+    try {
+      const cfg = createMemorySearchCfg({
+        workspaceDir,
+        indexPath,
+        sources: ["memory", "history"],
+        historyEnabled: true,
+      });
+      const appendResult = await appendChannelHistoryRecord({
+        cfg,
+        agentId: "main",
+        surface: "telegram",
+        conversationKey: "telegram:123",
+        record: {
+          kind: "channel_message",
+          ts: "2026-03-08T01:23:06.600Z",
+          surface: "telegram",
+          conversationId: "telegram:123",
+          direction: "inbound",
+          disposition: "processed",
+          messageId: "8030",
+          senderId: "123",
+          senderLabel: "Tester",
+          text: "history readback marker",
+          sessionKey: "agent:main:telegram:direct:123",
+        },
+      });
+      expect(appendResult.path).toBeTruthy();
+
+      manager = await getRequiredMemoryIndexManager({
+        cfg,
+        agentId: "main",
+      });
+
+      const historyRoot = resolveDefaultAgentHistoryDir("main");
+      const relPath = path.join("history", path.relative(historyRoot, appendResult.path!));
+      const result = await manager.readFile({ relPath });
+      expect(result.path).toContain("history/channel/");
+      expect(result.text).toContain("history readback marker");
+    } finally {
+      if (previousStateDir === undefined) {
+        delete process.env.OPENCLAW_STATE_DIR;
+      } else {
+        process.env.OPENCLAW_STATE_DIR = previousStateDir;
+      }
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
   });
 });

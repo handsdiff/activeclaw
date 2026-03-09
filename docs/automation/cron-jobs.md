@@ -360,6 +360,7 @@ Notes:
 
 - Job store: `~/.openclaw/cron/jobs.json` (Gateway-managed JSON).
 - Run history: `~/.openclaw/cron/runs/<jobId>.jsonl` (JSONL, auto-pruned by size and line count).
+- Durable recall history: `~/.openclaw/agents/<agentId>/history/cron/<jobId>/<YYYY-MM-DD>/<seq>.jsonl` (normalized searchable cron input/output history for memory recall).
 - Isolated cron run sessions in `sessions.json` are pruned by `cron.sessionRetention` (default `24h`; set `false` to disable).
 - Override store path: `cron.store` in config.
 

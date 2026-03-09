@@ -9,6 +9,7 @@ import { type VoyageBatchRequest, runVoyageEmbeddingBatches } from "./batch-voya
 import { enforceEmbeddingMaxInputTokens } from "./embedding-chunk-limits.js";
 import { estimateUtf8Bytes } from "./embedding-input-limits.js";
 import type { EmbeddingProvider } from "./embeddings.js";
+import type { HistoryFileEntry } from "./history-files.js";
 import {
   chunkMarkdown,
   hashText,
@@ -698,7 +699,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
   }
 
   protected async indexFile(
-    entry: MemoryFileEntry | SessionFileEntry,
+    entry: MemoryFileEntry | SessionFileEntry | HistoryFileEntry,
     options: { source: MemorySource; content?: string },
   ) {
     const providerModel = this.provider?.model ?? "fts-only";
@@ -709,7 +710,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     const chunks = this.provider
       ? enforceEmbeddingMaxInputTokens(this.provider, baseChunks, EMBEDDING_BATCH_MAX_TOKENS)
       : baseChunks;
-    if (options.source === "sessions" && "lineMap" in entry) {
+    if ((options.source === "sessions" || options.source === "history") && "lineMap" in entry) {
       remapChunkLines(chunks, entry.lineMap);
     }
     const embeddings = this.provider

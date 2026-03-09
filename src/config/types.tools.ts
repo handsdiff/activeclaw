@@ -316,11 +316,11 @@ export type MemorySearchConfig = {
   /** Enable vector memory search (default: true). */
   enabled?: boolean;
   /** Sources to index and search (default: ["memory"]). */
-  sources?: Array<"memory" | "sessions">;
+  sources?: ReadonlyArray<"memory" | "sessions" | "history">;
   /** Extra paths to include in memory search (directories or .md files). */
-  extraPaths?: string[];
+  extraPaths?: ReadonlyArray<string>;
   /** Paths to exclude from memory indexing/readback even when covered by memory roots or extraPaths. */
-  excludePaths?: string[];
+  excludePaths?: ReadonlyArray<string>;
   /** Experimental memory search settings. */
   experimental?: {
     /** Enable session transcript indexing (experimental, default: false). */
