@@ -2,6 +2,25 @@ import { setTimeout } from "node:timers/promises";
 import { fetchWithSsrFGuard } from "openclaw/plugin-sdk";
 import type { HubInboundMessage } from "./types.js";
 
+function buildTrustedHubFetchParams(url: string, signal?: AbortSignal) {
+  const hostname = new URL(url).hostname;
+  // Hub base URLs are operator-configured trusted endpoints. Allow the exact
+  // configured hostname so polling can survive split-horizon / reverse-proxy
+  // deployments without disabling SSRF protections for arbitrary hosts.
+  return {
+    url,
+    signal,
+    init: {
+      headers: { Accept: "application/json" },
+    },
+    mode: "trusted_env_proxy" as const,
+    policy: {
+      allowedHostnames: [hostname],
+    },
+    auditContext: "hub-poll",
+  };
+}
+
 export type PollHubOptions = {
   url: string;
   agentId: string;
@@ -29,13 +48,9 @@ export async function pollHubMessages(opts: PollHubOptions): Promise<void> {
   while (!abortSignal?.aborted) {
     try {
       const pollUrl = `${url}/agents/${encodeURIComponent(agentId)}/messages/poll?secret=${encodeURIComponent(secret)}&timeout=${pollTimeoutSec}`;
-      const { response, release } = await fetchWithSsrFGuard({
-        url: pollUrl,
-        signal: abortSignal,
-        init: {
-          headers: { Accept: "application/json" },
-        },
-      });
+      const { response, release } = await fetchWithSsrFGuard(
+        buildTrustedHubFetchParams(pollUrl, abortSignal),
+      );
 
       try {
         if (!response.ok) {
