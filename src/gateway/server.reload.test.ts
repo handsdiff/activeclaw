@@ -39,6 +39,7 @@ const hoisted = vi.hoisted(() => {
 
   const startGmailWatcher = vi.fn(async () => ({ started: true }));
   const stopGmailWatcher = vi.fn(async () => {});
+  const evictAllMemorySearchManagers = vi.fn(async () => {});
 
   const providerManager = {
     getRuntimeSnapshot: vi.fn(() => ({
@@ -134,6 +135,7 @@ const hoisted = vi.hoisted(() => {
     startHeartbeatRunner,
     startGmailWatcher,
     stopGmailWatcher,
+    evictAllMemorySearchManagers,
     providerManager,
     createChannelManager,
     startGatewayConfigReloader,
@@ -159,6 +161,14 @@ vi.mock("../hooks/gmail-watcher.js", () => ({
   startGmailWatcher: hoisted.startGmailWatcher,
   stopGmailWatcher: hoisted.stopGmailWatcher,
 }));
+
+vi.mock("../memory/index.js", async () => {
+  const actual = await vi.importActual<typeof import("../memory/index.js")>("../memory/index.js");
+  return {
+    ...actual,
+    evictAllMemorySearchManagers: hoisted.evictAllMemorySearchManagers,
+  };
+});
 
 vi.mock("./server-channels.js", () => ({
   createChannelManager: hoisted.createChannelManager,
@@ -207,6 +217,7 @@ describe("gateway hot reload", () => {
     } else {
       process.env.OPENAI_API_KEY = prevOpenAiApiKey;
     }
+    hoisted.evictAllMemorySearchManagers.mockClear();
   });
 
   async function writeEnvRefConfig() {
@@ -381,6 +392,7 @@ describe("gateway hot reload", () => {
           restartBrowserControl: true,
           restartCron: true,
           restartHeartbeat: true,
+          restartMemory: true,
           restartChannels: new Set(["whatsapp", "telegram", "discord", "signal", "imessage"]),
           noopPaths: [],
         },
@@ -396,6 +408,7 @@ describe("gateway hot reload", () => {
       expect(hoisted.startHeartbeatRunner).toHaveBeenCalledTimes(1);
       expect(hoisted.heartbeatUpdateConfig).toHaveBeenCalledTimes(1);
       expect(hoisted.heartbeatUpdateConfig).toHaveBeenCalledWith(nextConfig);
+      expect(hoisted.evictAllMemorySearchManagers).toHaveBeenCalledTimes(1);
 
       expect(hoisted.cronInstances.length).toBe(2);
       expect(hoisted.cronInstances[0].stop).toHaveBeenCalledTimes(1);
@@ -431,6 +444,7 @@ describe("gateway hot reload", () => {
           restartBrowserControl: false,
           restartCron: false,
           restartHeartbeat: false,
+          restartMemory: false,
           restartChannels: new Set(),
           noopPaths: [],
         },
@@ -502,6 +516,7 @@ describe("gateway hot reload", () => {
         restartBrowserControl: false,
         restartCron: false,
         restartHeartbeat: false,
+        restartMemory: false,
         restartChannels: new Set(),
         noopPaths: [],
       };

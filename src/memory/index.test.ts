@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { appendChannelHistoryRecord } from "../history/writer.js";
-import { getMemorySearchManager, type MemoryIndexManager } from "./index.js";
+import {
+  evictAllMemoryIndexManagers,
+  getMemorySearchManager,
+  type MemoryIndexManager,
+} from "./index.js";
 import "./test-runtime-mocks.js";
 
 let embedBatchCalls = 0;
@@ -573,6 +577,23 @@ describe("memory index", () => {
     expect(embedBatchCalls).toBeGreaterThan(callsAfterFirstSync);
     const status = secondManager.status();
     expect(status.files).toBeGreaterThan(0);
+    await secondManager.close?.();
+  });
+
+  it("evicts cached managers so the next lookup rebuilds from config", async () => {
+    const cfg = createCfg({ storePath: indexStatusPath });
+    const first = await getMemorySearchManager({ cfg, agentId: "main" });
+    const firstManager = requireManager(first);
+
+    await evictAllMemoryIndexManagers();
+    // Clear the test-local cache so subsequent tests rebuild fresh managers
+    // instead of hitting closed db handles from the evicted instances.
+    managersByStorePath.clear();
+    managersForCleanup.clear();
+
+    const second = await getMemorySearchManager({ cfg, agentId: "main" });
+    const secondManager = requireManager(second);
+    expect(Object.is(secondManager, firstManager)).toBe(false);
     await secondManager.close?.();
   });
 

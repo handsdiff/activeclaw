@@ -13,6 +13,7 @@ export type GatewayReloadPlan = {
   restartBrowserControl: boolean;
   restartCron: boolean;
   restartHeartbeat: boolean;
+  restartMemory: boolean;
   restartHealthMonitor: boolean;
   restartChannels: Set<ChannelKind>;
   noopPaths: string[];
@@ -30,6 +31,7 @@ type ReloadAction =
   | "restart-browser-control"
   | "restart-cron"
   | "restart-heartbeat"
+  | "restart-memory"
   | "restart-health-monitor"
   | `restart-channel:${ChannelId}`;
 
@@ -46,6 +48,16 @@ const BASE_RELOAD_RULES: ReloadRule[] = [
   { prefix: "hooks.gmail", kind: "hot", actions: ["restart-gmail-watcher"] },
   { prefix: "hooks", kind: "hot", actions: ["reload-hooks"] },
   {
+    prefix: "agents.defaults.memorySearch",
+    kind: "hot",
+    actions: ["restart-memory"],
+  },
+  {
+    prefix: "agents.list.*.memorySearch",
+    kind: "hot",
+    actions: ["restart-memory"],
+  },
+  {
     prefix: "agents.defaults.heartbeat",
     kind: "hot",
     actions: ["restart-heartbeat"],
@@ -59,6 +71,21 @@ const BASE_RELOAD_RULES: ReloadRule[] = [
     prefix: "agents.defaults.model",
     kind: "hot",
     actions: ["restart-heartbeat"],
+  },
+  {
+    prefix: "models.providers.*.baseUrl",
+    kind: "hot",
+    actions: ["restart-heartbeat", "restart-memory"],
+  },
+  {
+    prefix: "models.providers.*.apiKey",
+    kind: "hot",
+    actions: ["restart-heartbeat", "restart-memory"],
+  },
+  {
+    prefix: "models.providers.*.headers",
+    kind: "hot",
+    actions: ["restart-heartbeat", "restart-memory"],
   },
   {
     prefix: "models",
@@ -132,11 +159,37 @@ function listReloadRules(): ReloadRule[] {
 
 function matchRule(path: string): ReloadRule | null {
   for (const rule of listReloadRules()) {
-    if (path === rule.prefix || path.startsWith(`${rule.prefix}.`)) {
+    if (matchesReloadPath(path, rule.prefix)) {
       return rule;
     }
   }
   return null;
+}
+
+function matchesReloadPath(path: string, prefix: string): boolean {
+  const pathParts = splitReloadPath(path);
+  const prefixParts = splitReloadPath(prefix);
+  if (prefixParts.length === 0 || pathParts.length < prefixParts.length) {
+    return false;
+  }
+  for (let index = 0; index < prefixParts.length; index += 1) {
+    const prefixPart = prefixParts[index];
+    const pathPart = pathParts[index];
+    if (prefixPart === "*" || prefixPart === pathPart) {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+function splitReloadPath(path: string): string[] {
+  const normalized = path
+    .trim()
+    .replace(/\[(\*|\d*)\]/g, (_match, segment: string) => `.${segment || "*"}`)
+    .replace(/^\.+|\.+$/g, "")
+    .replace(/\.+/g, ".");
+  return normalized ? normalized.split(".").filter(Boolean) : [];
 }
 
 export function buildGatewayReloadPlan(changedPaths: string[]): GatewayReloadPlan {
@@ -150,6 +203,7 @@ export function buildGatewayReloadPlan(changedPaths: string[]): GatewayReloadPla
     restartBrowserControl: false,
     restartCron: false,
     restartHeartbeat: false,
+    restartMemory: false,
     restartHealthMonitor: false,
     restartChannels: new Set(),
     noopPaths: [],
@@ -176,6 +230,9 @@ export function buildGatewayReloadPlan(changedPaths: string[]): GatewayReloadPla
         break;
       case "restart-heartbeat":
         plan.restartHeartbeat = true;
+        break;
+      case "restart-memory":
+        plan.restartMemory = true;
         break;
       case "restart-health-monitor":
         plan.restartHealthMonitor = true;

@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 
+const hoisted = vi.hoisted(() => ({
+  qmdCreateDelayMs: 0,
+}));
+
 function createManagerStatus(params: {
   backend: "qmd" | "builtin";
   provider: string;
@@ -76,10 +80,16 @@ const fallbackManager = {
 };
 
 const mockMemoryIndexGet = vi.fn(async () => fallbackManager);
+const mockEvictAllMemoryIndexManagers = vi.fn(async () => {});
 
 vi.mock("./qmd-manager.js", () => ({
   QmdMemoryManager: {
-    create: vi.fn(async () => mockPrimary),
+    create: vi.fn(async () => {
+      if (hoisted.qmdCreateDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, hoisted.qmdCreateDelayMs));
+      }
+      return mockPrimary;
+    }),
   },
 }));
 
@@ -87,10 +97,11 @@ vi.mock("./manager.js", () => ({
   MemoryIndexManager: {
     get: mockMemoryIndexGet,
   },
+  evictAllMemoryIndexManagers: mockEvictAllMemoryIndexManagers,
 }));
 
 import { QmdMemoryManager } from "./qmd-manager.js";
-import { getMemorySearchManager } from "./search-manager.js";
+import { evictAllMemorySearchManagers, getMemorySearchManager } from "./search-manager.js";
 // eslint-disable-next-line @typescript-eslint/unbound-method -- mocked static function
 const createQmdManagerMock = vi.mocked(QmdMemoryManager.create);
 
@@ -119,7 +130,8 @@ async function createFailedQmdSearchHarness(params: { agentId: string; errorMess
   return { cfg, manager: requireManager(first), firstResult: first };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await evictAllMemorySearchManagers();
   mockPrimary.search.mockClear();
   mockPrimary.readFile.mockClear();
   mockPrimary.status.mockClear();
@@ -136,7 +148,9 @@ beforeEach(() => {
   fallbackManager.close.mockClear();
   mockMemoryIndexGet.mockClear();
   mockMemoryIndexGet.mockResolvedValue(fallbackManager);
+  mockEvictAllMemoryIndexManagers.mockClear();
   createQmdManagerMock.mockClear();
+  hoisted.qmdCreateDelayMs = 0;
 });
 
 describe("getMemorySearchManager caching", () => {
@@ -242,5 +256,59 @@ describe("getMemorySearchManager caching", () => {
     mockMemoryIndexGet.mockRejectedValueOnce(new Error("No API key found for provider openai"));
 
     await expect(firstManager.search("hello")).rejects.toThrow("qmd query failed");
+  });
+
+  it("evicts cached qmd wrappers and builtin managers on global memory eviction", async () => {
+    const agentId = "evict-all";
+    const cfg = createQmdCfg(agentId);
+
+    const first = await getMemorySearchManager({ cfg, agentId });
+    const firstManager = requireManager(first);
+
+    await evictAllMemorySearchManagers();
+
+    expect(mockPrimary.close).toHaveBeenCalledTimes(1);
+    expect(fallbackManager.close).toHaveBeenCalledTimes(0);
+    expect(mockEvictAllMemoryIndexManagers).toHaveBeenCalledTimes(1);
+
+    const second = await getMemorySearchManager({ cfg, agentId });
+    expect(second.manager).not.toBe(firstManager);
+    expect(createQmdManagerMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears stale builtin fallback state even after a failed wrapper self-evicts", async () => {
+    const agentId = "evict-fallback";
+    const { cfg, manager } = await createFailedQmdSearchHarness({
+      agentId,
+      errorMessage: "qmd query failed",
+    });
+
+    await manager.search("hello");
+    expect(fallbackSearch).toHaveBeenCalledTimes(1);
+
+    await evictAllMemorySearchManagers();
+
+    expect(mockEvictAllMemoryIndexManagers).toHaveBeenCalledTimes(1);
+
+    const second = await getMemorySearchManager({ cfg, agentId });
+    expect(second.manager).not.toBe(manager);
+  });
+
+  it("does not recache a stale qmd wrapper after eviction during async creation", async () => {
+    const agentId = "qmd-race";
+    const cfg = createQmdCfg(agentId);
+    hoisted.qmdCreateDelayMs = 50;
+
+    const firstPromise = getMemorySearchManager({ cfg, agentId });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    await evictAllMemorySearchManagers();
+
+    hoisted.qmdCreateDelayMs = 0;
+    const second = await getMemorySearchManager({ cfg, agentId });
+    const first = await firstPromise;
+
+    expect(first.manager).toBe(second.manager);
+    expect(createQmdManagerMock).toHaveBeenCalledTimes(2);
   });
 });

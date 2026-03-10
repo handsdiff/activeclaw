@@ -54,6 +54,53 @@ const log = createSubsystemLogger("memory");
 
 const INDEX_CACHE = new Map<string, MemoryIndexManager>();
 const INDEX_CACHE_PENDING = new Map<string, Promise<MemoryIndexManager>>();
+let indexCacheGeneration = 0;
+
+class MemoryManagerCacheInvalidatedError extends Error {
+  constructor() {
+    super("memory manager cache invalidated during config reload");
+  }
+}
+
+async function awaitFreshMemoryManagerAfterInvalidation(
+  key: string,
+  stalePromise?: Promise<MemoryIndexManager>,
+): Promise<MemoryIndexManager> {
+  const refreshed = INDEX_CACHE.get(key);
+  if (refreshed) {
+    return refreshed;
+  }
+  const pending = INDEX_CACHE_PENDING.get(key);
+  if (pending && pending !== stalePromise) {
+    return await pending;
+  }
+  throw new MemoryManagerCacheInvalidatedError();
+}
+
+async function closeDiscardedMemoryManager(
+  manager: MemoryIndexManager,
+  key: string,
+  context: string,
+): Promise<void> {
+  try {
+    await manager.close();
+  } catch (err) {
+    log.warn(`memory manager close failed during ${context} for ${key}: ${String(err)}`);
+  }
+}
+
+export async function evictAllMemoryIndexManagers(): Promise<void> {
+  indexCacheGeneration += 1;
+  INDEX_CACHE_PENDING.clear();
+  const managers = [...INDEX_CACHE.values()];
+  INDEX_CACHE.clear();
+  const results = await Promise.allSettled(managers.map(async (manager) => await manager.close()));
+  for (const result of results) {
+    if (result.status === "rejected") {
+      log.warn(`memory manager close failed during cache eviction: ${String(result.reason)}`);
+    }
+  }
+}
 
 type SearchRuntimeState = {
   db: DatabaseSync;
@@ -169,7 +216,9 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     if (pending) {
       return pending;
     }
-    const createPromise = (async () => {
+    const cacheGeneration = indexCacheGeneration;
+    let createPromise!: Promise<MemoryIndexManager>;
+    createPromise = (async (): Promise<MemoryIndexManager> => {
       const providerResult = await createEmbeddingProvider({
         config: cfg,
         agentDir: resolveAgentDir(cfg, agentId),
@@ -179,6 +228,9 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
         fallback: settings.fallback,
         local: settings.local,
       });
+      if (cacheGeneration !== indexCacheGeneration) {
+        return await awaitFreshMemoryManagerAfterInvalidation(key, createPromise);
+      }
       const refreshed = INDEX_CACHE.get(key);
       if (refreshed) {
         return refreshed;
@@ -192,6 +244,10 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
         providerResult,
         purpose: params.purpose,
       });
+      if (cacheGeneration !== indexCacheGeneration) {
+        await closeDiscardedMemoryManager(manager, key, "config reload invalidation");
+        return await awaitFreshMemoryManagerAfterInvalidation(key, createPromise);
+      }
       INDEX_CACHE.set(key, manager);
       return manager;
     })();
@@ -984,6 +1040,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       return;
     }
     this.closed = true;
+    const cleanupErrors: string[] = [];
     const pendingSync = this.syncing;
     if (this.watchTimer) {
       clearTimeout(this.watchTimer);
@@ -1002,26 +1059,59 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       this.historyMaintenanceTimer = null;
     }
     if (this.watcher) {
-      await this.watcher.close();
+      try {
+        await this.watcher.close();
+      } catch (err) {
+        cleanupErrors.push(`watcher close failed: ${String(err)}`);
+      }
       this.watcher = null;
     }
     if (this.historyWatcher) {
-      await this.historyWatcher.close();
+      try {
+        await this.historyWatcher.close();
+      } catch (err) {
+        cleanupErrors.push(`history watcher close failed: ${String(err)}`);
+      }
       this.historyWatcher = null;
     }
     if (this.sessionUnsubscribe) {
-      this.sessionUnsubscribe();
+      try {
+        this.sessionUnsubscribe();
+      } catch (err) {
+        cleanupErrors.push(`session unsubscribe failed: ${String(err)}`);
+      }
       this.sessionUnsubscribe = null;
     }
     if (pendingSync) {
       try {
         await pendingSync;
-      } catch {}
+      } catch (err) {
+        cleanupErrors.push(`pending sync drain failed: ${String(err)}`);
+      }
     }
-    await this.waitForActiveSearchReadersToDrain();
+    try {
+      await this.waitForActiveSearchReadersToDrain();
+    } catch (err) {
+      cleanupErrors.push(`search reader drain failed: ${String(err)}`);
+    }
     this.searchSnapshot = null;
     this.reindexPromoting = false;
-    this.db.close();
-    INDEX_CACHE.delete(this.cacheKey);
+    try {
+      this.db.close();
+    } catch (err) {
+      cleanupErrors.push(`database close failed: ${String(err)}`);
+    }
+    // Config reloads can build a replacement manager for the same key while the
+    // old instance is still draining. Only evict the cache entry if it still
+    // points at this instance.
+    if (INDEX_CACHE.get(this.cacheKey) === this) {
+      INDEX_CACHE.delete(this.cacheKey);
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        cleanupErrors.map((message) => new Error(message)),
+        `memory manager close failed for ${this.agentId}`,
+      );
+    }
   }
 }

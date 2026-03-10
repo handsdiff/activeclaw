@@ -24,7 +24,7 @@ describe("diffConfigPaths", () => {
     const prev = { messages: { groupChat: { mentionPatterns: ["a"] } } };
     const next = { messages: { groupChat: { mentionPatterns: ["b"] } } };
     const paths = diffConfigPaths(prev, next);
-    expect(paths).toContain("messages.groupChat.mentionPatterns");
+    expect(paths).toContain("messages.groupChat.mentionPatterns.0");
   });
 
   it("does not report unchanged arrays of objects as changed", () => {
@@ -66,7 +66,21 @@ describe("diffConfigPaths", () => {
         },
       },
     };
-    expect(diffConfigPaths(prev, next)).toContain("memory.qmd.paths");
+    expect(diffConfigPaths(prev, next)).toContain("memory.qmd.paths.0.pattern");
+  });
+
+  it("reports indexed agent overrides so hot-reload rules can match per-agent changes", () => {
+    const prev = {
+      agents: {
+        list: [{ id: "main", memorySearch: { remote: { baseUrl: "https://a.example" } } }],
+      },
+    };
+    const next = {
+      agents: {
+        list: [{ id: "main", memorySearch: { remote: { baseUrl: "https://b.example" } } }],
+      },
+    };
+    expect(diffConfigPaths(prev, next)).toContain("agents.list.0.memorySearch.remote.baseUrl");
   });
 });
 
@@ -149,20 +163,44 @@ describe("buildGatewayReloadPlan", () => {
 
   it("restarts heartbeat when model-related config changes", () => {
     const plan = buildGatewayReloadPlan([
-      "models.providers.openai.models",
+      "models.providers.openai.baseUrl",
       "agents.defaults.model",
     ]);
     expect(plan.restartGateway).toBe(false);
     expect(plan.restartHeartbeat).toBe(true);
+    expect(plan.restartMemory).toBe(true);
     expect(plan.hotReasons).toEqual(
-      expect.arrayContaining(["models.providers.openai.models", "agents.defaults.model"]),
+      expect.arrayContaining(["models.providers.openai.baseUrl", "agents.defaults.model"]),
     );
+  });
+
+  it("does not restart memory for provider catalog-only changes", () => {
+    const plan = buildGatewayReloadPlan(["models.providers.openai.models"]);
+    expect(plan.restartGateway).toBe(false);
+    expect(plan.restartHeartbeat).toBe(true);
+    expect(plan.restartMemory).toBe(false);
+    expect(plan.hotReasons).toContain("models.providers.openai.models");
+  });
+
+  it("restarts memory managers when memory-search config changes", () => {
+    const plan = buildGatewayReloadPlan(["agents.defaults.memorySearch.remote.baseUrl"]);
+    expect(plan.restartGateway).toBe(false);
+    expect(plan.restartMemory).toBe(true);
+    expect(plan.hotReasons).toContain("agents.defaults.memorySearch.remote.baseUrl");
+  });
+
+  it("restarts memory managers when per-agent memory-search config changes", () => {
+    const plan = buildGatewayReloadPlan(["agents.list.0.memorySearch.remote.baseUrl"]);
+    expect(plan.restartGateway).toBe(false);
+    expect(plan.restartMemory).toBe(true);
+    expect(plan.hotReasons).toContain("agents.list.0.memorySearch.remote.baseUrl");
   });
 
   it("restarts heartbeat when agents.defaults.models allowlist changes", () => {
     const plan = buildGatewayReloadPlan(["agents.defaults.models"]);
     expect(plan.restartGateway).toBe(false);
     expect(plan.restartHeartbeat).toBe(true);
+    expect(plan.restartMemory).toBe(false);
     expect(plan.hotReasons).toContain("agents.defaults.models");
     expect(plan.noopPaths).toEqual([]);
   });

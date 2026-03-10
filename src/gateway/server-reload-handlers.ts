@@ -14,6 +14,7 @@ import {
   emitGatewayRestart,
   setGatewaySigusr1RestartPolicy,
 } from "../infra/restart.js";
+import { evictAllMemorySearchManagers } from "../memory/index.js";
 import { setCommandLaneConcurrency, getTotalQueueSize } from "../process/command-queue.js";
 import { CommandLane } from "../process/lanes.js";
 import type { ChannelHealthMonitor } from "./channel-health-monitor.js";
@@ -67,6 +68,10 @@ export function createGatewayReloadHandlers(params: {
 
     if (plan.restartHeartbeat) {
       nextState.heartbeatRunner.updateConfig(nextConfig);
+    }
+
+    if (plan.restartMemory) {
+      await evictAllMemorySearchManagers();
     }
 
     resetDirectoryCache();

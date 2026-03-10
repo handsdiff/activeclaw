@@ -42,11 +42,22 @@ export function diffConfigPaths(prev: unknown, next: unknown, prefix = ""): stri
     return paths;
   }
   if (Array.isArray(prev) && Array.isArray(next)) {
-    // Arrays can contain object entries (for example memory.qmd.paths/scope.rules);
-    // compare structurally so identical values are not reported as changed.
+    // Arrays can contain object entries (for example memory.qmd.paths/scope.rules
+    // or agents.list). Walk entries so targeted reload rules can match specific
+    // indexed paths when only one element changes.
     if (isDeepStrictEqual(prev, next)) {
       return [];
     }
+    const paths: string[] = [];
+    const maxLength = Math.max(prev.length, next.length);
+    for (let index = 0; index < maxLength; index += 1) {
+      const childPrefix = prefix ? `${prefix}.${index}` : String(index);
+      const childPaths = diffConfigPaths(prev[index], next[index], childPrefix);
+      if (childPaths.length > 0) {
+        paths.push(...childPaths);
+      }
+    }
+    return paths;
   }
   return [prefix || "<root>"];
 }
