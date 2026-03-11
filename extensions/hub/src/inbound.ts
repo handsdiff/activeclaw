@@ -263,6 +263,12 @@ export async function handleHubInbound(params: {
     },
     replyOptions: {
       onModelSelected,
+      // Hub transport must not surface incremental internal work/product text.
+      // Even though the plugin advertises blockStreaming support for chunking,
+      // the live runtime/provider path has been leaking non-final assistant text
+      // into Hub conversations. Force final-only delivery until the transport can
+      // provably handle streamed block replies without exposing internal narration.
+      disableBlockStreaming: true,
     },
   });
 }
