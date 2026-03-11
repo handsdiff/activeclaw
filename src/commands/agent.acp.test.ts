@@ -195,6 +195,62 @@ describe("agentCommand ACP runtime routing", () => {
     });
   });
 
+  it("routes ephemeral internal-event ACP turns via steer mode", async () => {
+    await withTempHome(async (home) => {
+      const storePath = path.join(home, "sessions.json");
+      writeAcpSessionStore(storePath);
+      mockConfig(home, storePath);
+
+      const runTurn = vi.fn(async (paramsUnknown: unknown) => {
+        const params = paramsUnknown as {
+          onEvent?: (event: { type: string; text?: string; stopReason?: string }) => Promise<void>;
+        };
+        await params.onEvent?.({ type: "text_delta", text: "Handled." });
+        await params.onEvent?.({ type: "done", stopReason: "stop" });
+      });
+
+      mockAcpManager({
+        runTurn: (params: unknown) => runTurn(params),
+      });
+
+      await agentCommand(
+        {
+          message: "process the completion update",
+          sessionKey: "agent:codex:acp:test",
+          internalEvents: [
+            {
+              type: "task_completion",
+              source: "subagent",
+              childSessionKey: "agent:main:subagent:test",
+              childSessionId: "child-session",
+              announceType: "subagent task",
+              taskLabel: "nightly check",
+              status: "ok",
+              statusLabel: "ok",
+              result: "All checks passed.",
+              replyInstruction: "Send the update now.",
+            },
+          ],
+          inputProvenance: {
+            kind: "inter_session",
+            sourceTool: "subagent_announce",
+            persistence: "ephemeral",
+          },
+        },
+        runtime,
+      );
+
+      expect(runTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionKey: "agent:codex:acp:test",
+          mode: "steer",
+          text: expect.stringContaining("Ephemeral runtime context for this turn only."),
+        }),
+      );
+      expect(runEmbeddedPiAgentSpy).not.toHaveBeenCalled();
+    });
+  });
+
   it("fails closed for ACP-shaped session keys missing ACP metadata", async () => {
     await withTempHome(async (home) => {
       const storePath = path.join(home, "sessions.json");

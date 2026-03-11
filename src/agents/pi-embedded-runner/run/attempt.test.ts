@@ -10,6 +10,7 @@ import {
   resolveOllamaCompatNumCtxEnabled,
   resolvePromptBuildHookResult,
   resolvePromptModeForSession,
+  resolveSyntheticTurnCleanupReason,
   shouldInjectOllamaCompatNumCtx,
   decodeHtmlEntitiesInObject,
   wrapOllamaCompatNumCtx,
@@ -138,6 +139,79 @@ describe("resolvePromptModeForSession", () => {
   it("uses full mode for cron sessions", () => {
     expect(resolvePromptModeForSession("agent:main:cron:job-1")).toBe("full");
     expect(resolvePromptModeForSession("agent:main:cron:job-1:run:run-abc")).toBe("full");
+  });
+});
+
+describe("resolveSyntheticTurnCleanupReason", () => {
+  it("rewinds completed memory maintenance turns when they did not compact or error", () => {
+    expect(
+      resolveSyntheticTurnCleanupReason({
+        trigger: "memory",
+        promptErrored: false,
+        compactionOccurredThisAttempt: false,
+        timedOutDuringCompaction: false,
+        didSendViaMessagingTool: false,
+        assistantText: "Saved the notes.",
+      }),
+    ).toBe("memory maintenance turn");
+  });
+
+  it("keeps memory turns when compaction happened during the run", () => {
+    expect(
+      resolveSyntheticTurnCleanupReason({
+        trigger: "memory",
+        promptErrored: false,
+        compactionOccurredThisAttempt: true,
+        timedOutDuringCompaction: false,
+        didSendViaMessagingTool: false,
+        assistantText: "Saved the notes.",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("rewinds silent inter-session completion turns that produced no outward action", () => {
+    expect(
+      resolveSyntheticTurnCleanupReason({
+        inputProvenanceKind: "inter_session",
+        inputProvenanceSourceTool: "subagent_announce",
+        inputProvenancePersistence: "ephemeral",
+        promptErrored: false,
+        compactionOccurredThisAttempt: false,
+        timedOutDuringCompaction: false,
+        didSendViaMessagingTool: false,
+        assistantText: "NO_REPLY",
+      }),
+    ).toBe("silent inter-session completion turn");
+  });
+
+  it("keeps inter-session turns when they already delivered via messaging tool", () => {
+    expect(
+      resolveSyntheticTurnCleanupReason({
+        inputProvenanceKind: "inter_session",
+        inputProvenanceSourceTool: "subagent_announce",
+        inputProvenancePersistence: "ephemeral",
+        promptErrored: false,
+        compactionOccurredThisAttempt: false,
+        timedOutDuringCompaction: false,
+        didSendViaMessagingTool: true,
+        assistantText: "NO_REPLY",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("keeps silent inter-session turns from non-announce tools", () => {
+    expect(
+      resolveSyntheticTurnCleanupReason({
+        inputProvenanceKind: "inter_session",
+        inputProvenanceSourceTool: "sessions_send",
+        inputProvenancePersistence: "persist",
+        promptErrored: false,
+        compactionOccurredThisAttempt: false,
+        timedOutDuringCompaction: false,
+        didSendViaMessagingTool: false,
+        assistantText: "NO_REPLY",
+      }),
+    ).toBeUndefined();
   });
 });
 

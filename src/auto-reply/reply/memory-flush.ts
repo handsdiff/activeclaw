@@ -18,6 +18,8 @@ export const DEFAULT_MEMORY_FLUSH_PROMPT = [
   `If nothing to store, reply with ${SILENT_REPLY_TOKEN}.`,
 ].join(" ");
 
+export const DEFAULT_MEMORY_FLUSH_TRIGGER_PROMPT = "Perform the pre-compaction memory flush now.";
+
 export const DEFAULT_MEMORY_FLUSH_SYSTEM_PROMPT = [
   "Pre-compaction memory flush turn.",
   "The session is near auto-compaction; capture durable memories to disk.",

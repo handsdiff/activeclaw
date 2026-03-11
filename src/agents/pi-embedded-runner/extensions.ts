@@ -30,6 +30,8 @@ function resolveContextWindowTokens(params: {
 function buildContextPruningFactory(params: {
   cfg: OpenClawConfig | undefined;
   sessionManager: SessionManager;
+  sessionKey?: string;
+  runId?: string;
   provider: string;
   modelId: string;
   model: Model<Api> | undefined;
@@ -64,6 +66,8 @@ function resolveCompactionMode(cfg?: OpenClawConfig): "default" | "safeguard" {
 export function buildEmbeddedExtensionFactories(params: {
   cfg: OpenClawConfig | undefined;
   sessionManager: SessionManager;
+  sessionKey?: string;
+  runId?: string;
   provider: string;
   modelId: string;
   model: Model<Api> | undefined;
@@ -80,6 +84,10 @@ export function buildEmbeddedExtensionFactories(params: {
       defaultTokens: DEFAULT_CONTEXT_TOKENS,
     });
     setCompactionSafeguardRuntime(params.sessionManager, {
+      sessionKey: params.sessionKey,
+      runId: params.runId,
+      provider: params.provider,
+      modelId: params.modelId,
       maxHistoryShare: compactionCfg?.maxHistoryShare,
       contextWindowTokens: contextWindowInfo.tokens,
       identifierPolicy: compactionCfg?.identifierPolicy,

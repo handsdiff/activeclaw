@@ -598,6 +598,7 @@ afterAll(() => {
 function createRun(params: {
   prompt: string;
   messageId?: string;
+  ephemeralSystemPrompt?: string;
   originatingChannel?: FollowupRun["originatingChannel"];
   originatingTo?: string;
   originatingAccountId?: string;
@@ -605,6 +606,7 @@ function createRun(params: {
 }): FollowupRun {
   return {
     prompt: params.prompt,
+    ephemeralSystemPrompt: params.ephemeralSystemPrompt,
     messageId: params.messageId,
     enqueuedAt: Date.now(),
     originatingChannel: params.originatingChannel,
@@ -734,6 +736,51 @@ describe("followup queue deduplication", () => {
       settings,
     );
     expect(third).toBe(true);
+  });
+
+  it("preserves per-message ephemeral system prompts when collect batches multiple items", async () => {
+    const key = `test-collect-ephemeral-prompts-${Date.now()}`;
+    const settings: QueueSettings = {
+      mode: "collect",
+      debounceMs: 0,
+      cap: 50,
+      dropPolicy: "summarize",
+    };
+    const calls: FollowupRun[] = [];
+    const done = createDeferred<void>();
+    const runFollowup = async (run: FollowupRun) => {
+      calls.push(run);
+      done.resolve();
+    };
+
+    enqueueFollowupRun(
+      key,
+      createRun({
+        prompt: "first",
+        ephemeralSystemPrompt: "System: [t] First event.",
+        originatingChannel: "whatsapp",
+        originatingTo: "+1234567890",
+      }),
+      settings,
+    );
+    enqueueFollowupRun(
+      key,
+      createRun({
+        prompt: "second",
+        ephemeralSystemPrompt: "System: [t] Second event.",
+        originatingChannel: "whatsapp",
+        originatingTo: "+1234567890",
+      }),
+      settings,
+    );
+
+    scheduleFollowupDrain(key, runFollowup);
+    await done.promise;
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.prompt).toContain("[Queued messages while agent was busy]");
+    expect(calls[0]?.ephemeralSystemPrompt).toContain("System: [t] First event.");
+    expect(calls[0]?.ephemeralSystemPrompt).toContain("System: [t] Second event.");
   });
 
   it("does not deduplicate across different providers without message id", async () => {
@@ -1093,6 +1140,47 @@ describe("followup queue collect routing", () => {
     expect(calls[0]?.originatingAccountId).toBe("work");
     expect(calls[0]?.originatingThreadId).toBe("1739142736.000100");
     expect(calls[0]?.prompt).toContain("[Queue overflow] Dropped 1 message due to cap.");
+  });
+
+  it("preserves dropped runtime-only context on overflow summary followups", async () => {
+    const key = `test-overflow-summary-ephemeral-${Date.now()}`;
+    const calls: FollowupRun[] = [];
+    const done = createDeferred<void>();
+    const runFollowup = async (run: FollowupRun) => {
+      calls.push(run);
+      done.resolve();
+    };
+    const settings: QueueSettings = {
+      mode: "followup",
+      debounceMs: 0,
+      cap: 1,
+      dropPolicy: "summarize",
+    };
+
+    enqueueFollowupRun(
+      key,
+      createRun({
+        prompt: "first",
+        ephemeralSystemPrompt: "System: [t] First dropped event.",
+      }),
+      settings,
+    );
+    enqueueFollowupRun(
+      key,
+      createRun({
+        prompt: "second",
+        ephemeralSystemPrompt: "System: [t] Second surviving event.",
+      }),
+      settings,
+    );
+
+    scheduleFollowupDrain(key, runFollowup);
+    await done.promise;
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.prompt).toContain("[Queue overflow] Dropped 1 message due to cap.");
+    expect(calls[0]?.ephemeralSystemPrompt).toContain("System: [t] First dropped event.");
+    expect(calls[0]?.ephemeralSystemPrompt).toContain("System: [t] Second surviving event.");
   });
 });
 

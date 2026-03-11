@@ -14,6 +14,7 @@ import type { ConversationRef } from "../infra/outbound/session-binding-service.
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { normalizeAccountId, normalizeMainKey } from "../routing/session-key.js";
 import { defaultRuntime } from "../runtime.js";
+import { buildEphemeralPromptBlock } from "../sessions/ephemeral-context.js";
 import { extractTextFromChatContent } from "../shared/chat-content.js";
 import {
   type DeliveryContext,
@@ -608,6 +609,7 @@ async function sendAnnounce(item: AnnounceQueueItem) {
         sourceSessionKey: item.sourceSessionKey,
         sourceChannel: item.sourceChannel ?? INTERNAL_MESSAGE_CHANNEL,
         sourceTool: item.sourceTool ?? "subagent_announce",
+        persistence: "ephemeral",
       },
       idempotencyKey,
     },
@@ -804,6 +806,7 @@ async function sendSubagentAnnounceDirectly(params: {
               sourceSessionKey: params.sourceSessionKey,
               sourceChannel: params.sourceChannel ?? INTERNAL_MESSAGE_CHANNEL,
               sourceTool: params.sourceTool ?? "subagent_announce",
+              persistence: "ephemeral",
             },
             idempotencyKey: params.directIdempotencyKey,
           },
@@ -1020,11 +1023,30 @@ function buildAnnounceReplyInstruction(params: {
   return `A completed ${params.announceType} is ready for user delivery. Convert the result above into your normal assistant voice and send that user-facing update now. Keep this internal context private (don't mention system/log/stats/session details or announce type), and do not copy the internal event text verbatim. Reply ONLY: ${SILENT_REPLY_TOKEN} if this exact result was already delivered to the user in this same turn.`;
 }
 
-function buildAnnounceSteerMessage(events: AgentInternalEvent[]): string {
-  return (
-    formatAgentInternalEventsForPrompt(events) ||
-    "A background task finished. Process the completion update now."
-  );
+function buildAnnounceTriggerMessage(taskLabel?: string): string {
+  const lines = ["A background task finished. Process the completion update now."];
+  const trimmedTaskLabel = taskLabel?.trim();
+  if (trimmedTaskLabel) {
+    lines.push(`Task: ${trimmedTaskLabel}`);
+  }
+  return lines.join("\n");
+}
+
+function buildAnnounceSteerMessage(events: AgentInternalEvent[], taskLabel?: string): string {
+  const renderedEvents = formatAgentInternalEventsForPrompt(events);
+  if (!renderedEvents) {
+    return buildAnnounceTriggerMessage(taskLabel);
+  }
+  return [
+    buildEphemeralPromptBlock({
+      heading: "Ephemeral runtime context for this turn only.",
+      description: "This context is runtime-generated, not user-authored conversation history.",
+      body: renderedEvents,
+    }),
+    buildAnnounceTriggerMessage(taskLabel),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function hasUsableSessionEntry(entry: unknown): boolean {
@@ -1106,6 +1128,7 @@ async function wakeSubagentRunAfterDescendants(params: {
               sourceSessionKey: params.childSessionKey,
               sourceChannel: INTERNAL_MESSAGE_CHANNEL,
               sourceTool: "subagent_announce",
+              persistence: "ephemeral",
             },
             idempotencyKey: buildAnnounceIdempotencyKey(`${params.announceId}:wake`),
           },
@@ -1338,6 +1361,11 @@ export async function runSubagentAnnounceFlow(params: {
     const taskLabel = params.label || params.task || "task";
     const announceSessionId = childSessionId || "unknown";
     const findings = childCompletionFindings || reply || "(no output)";
+    const findingsSource = childCompletionFindings?.trim()
+      ? "children"
+      : reply?.trim()
+        ? "reply"
+        : "empty";
 
     let requesterIsSubagent = requesterDepth >= 1;
     if (requesterIsSubagent) {
@@ -1393,7 +1421,16 @@ export async function runSubagentAnnounceFlow(params: {
         replyInstruction,
       },
     ];
-    const triggerMessage = buildAnnounceSteerMessage(internalEvents);
+    const triggerMessage = buildAnnounceTriggerMessage(taskLabel);
+    const steerMessage = buildAnnounceSteerMessage(internalEvents, taskLabel);
+    defaultRuntime.log(
+      `[debug] subagent announce prepared ` +
+        `childSession=${params.childSessionKey} childRun=${params.childRunId} ` +
+        `requester=${targetRequesterSessionKey} source=${findingsSource} ` +
+        `findingsChars=${findings.length} triggerChars=${triggerMessage.length} ` +
+        `steerChars=${steerMessage.length} requesterIsSubagent=${requesterIsSubagent} ` +
+        `expectsCompletion=${expectsCompletionMessage}`,
+    );
 
     // Send to the requester session. For nested subagents this is an internal
     // follow-up injection (deliver=false) so the orchestrator receives it.
@@ -1418,7 +1455,7 @@ export async function runSubagentAnnounceFlow(params: {
       requesterSessionKey: targetRequesterSessionKey,
       announceId,
       triggerMessage,
-      steerMessage: triggerMessage,
+      steerMessage,
       internalEvents,
       summaryLine: taskLabel,
       requesterOrigin:
@@ -1437,6 +1474,12 @@ export async function runSubagentAnnounceFlow(params: {
       directIdempotencyKey,
       signal: params.signal,
     });
+    defaultRuntime.log(
+      `[debug] subagent announce delivered ` +
+        `childSession=${params.childSessionKey} childRun=${params.childRunId} ` +
+        `requester=${targetRequesterSessionKey} delivered=${delivery.delivered} ` +
+        `path=${delivery.path} directOriginChannel=${completionDirectOrigin?.channel ?? directOrigin?.channel ?? "none"}`,
+    );
     didAnnounce = delivery.delivered;
     if (!delivery.delivered && delivery.path === "direct" && delivery.error) {
       defaultRuntime.error?.(

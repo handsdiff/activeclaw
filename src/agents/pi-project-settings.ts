@@ -50,14 +50,13 @@ export function createEmbeddedPiSettingsManager(params: {
 }): SettingsManager {
   const fileSettingsManager = SettingsManager.create(params.cwd, params.agentDir);
   const policy = resolveEmbeddedPiProjectSettingsPolicy(params.cfg);
-  if (policy === "trusted") {
-    return fileSettingsManager;
-  }
   const settings = buildEmbeddedPiSettingsSnapshot({
     globalSettings: fileSettingsManager.getGlobalSettings(),
     projectSettings: fileSettingsManager.getProjectSettings(),
     policy,
   });
+  // Embedded runs should always use an in-memory snapshot so runtime-only
+  // overrides never mutate persisted Pi settings on disk.
   return SettingsManager.inMemory(settings);
 }
 

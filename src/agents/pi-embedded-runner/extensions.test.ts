@@ -26,6 +26,8 @@ describe("buildEmbeddedExtensionFactories", () => {
     const factories = buildEmbeddedExtensionFactories({
       cfg,
       sessionManager,
+      sessionKey: "agent:main:telegram:direct:123",
+      runId: "run-1",
       provider: "anthropic",
       modelId: "claude-sonnet-4-20250514",
       model,
@@ -33,6 +35,10 @@ describe("buildEmbeddedExtensionFactories", () => {
 
     expect(factories).toContain(compactionSafeguardExtension);
     expect(getCompactionSafeguardRuntime(sessionManager)).toMatchObject({
+      sessionKey: "agent:main:telegram:direct:123",
+      runId: "run-1",
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-20250514",
       qualityGuardEnabled: false,
     });
   });
@@ -60,6 +66,8 @@ describe("buildEmbeddedExtensionFactories", () => {
     const factories = buildEmbeddedExtensionFactories({
       cfg,
       sessionManager,
+      sessionKey: "agent:main:telegram:direct:456",
+      runId: "run-2",
       provider: "anthropic",
       modelId: "claude-sonnet-4-20250514",
       model,
@@ -67,6 +75,10 @@ describe("buildEmbeddedExtensionFactories", () => {
 
     expect(factories).toContain(compactionSafeguardExtension);
     expect(getCompactionSafeguardRuntime(sessionManager)).toMatchObject({
+      sessionKey: "agent:main:telegram:direct:456",
+      runId: "run-2",
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-20250514",
       qualityGuardEnabled: true,
       qualityGuardMaxRetries: 2,
     });

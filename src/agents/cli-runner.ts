@@ -48,6 +48,17 @@ import { redactRunIdentifier, resolveRunWorkspaceDir } from "./workspace-run.js"
 
 const log = createSubsystemLogger("agent/claude-cli");
 
+function prependPromptSection(prompt: string, addition: string | undefined): string {
+  const trimmedAddition = addition?.trim();
+  if (!trimmedAddition) {
+    return prompt;
+  }
+  if (prompt.includes(trimmedAddition)) {
+    return prompt;
+  }
+  return `${trimmedAddition}\n\n${prompt}`;
+}
+
 export async function runCliAgent(params: {
   sessionId: string;
   sessionKey?: string;
@@ -217,6 +228,17 @@ export async function runCliAgent(params: {
       cleanupImages = imagePayload.cleanup;
       if (!backend.imageArg) {
         prompt = appendImagePathsToPrompt(prompt, imagePaths);
+      }
+    }
+    if (!systemPromptArg) {
+      const inlineExtraSystemPrompt = extraSystemPrompt.trim();
+      if (inlineExtraSystemPrompt) {
+        prompt = prependPromptSection(prompt, inlineExtraSystemPrompt);
+        log.debug(
+          `cli prompt fallback: inlined extra system prompt ` +
+            `provider=${params.provider} session=${resolvedSessionId ?? params.sessionId} ` +
+            `chars=${inlineExtraSystemPrompt.length}`,
+        );
       }
     }
 

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ExtensionAPI, FileOperations } from "@mariozechner/pi-coding-agent";
 import { extractSections } from "../../auto-reply/reply/post-compaction-context.js";
 import { openBoundaryFile } from "../../infra/boundary-file-read.js";
@@ -92,6 +93,19 @@ function truncateFailureText(text: string, maxChars: number): string {
   return `${text.slice(0, Math.max(0, maxChars - 3))}...`;
 }
 
+function buildCompactionRuntimeLogContext(params: {
+  runtime: ReturnType<typeof getCompactionSafeguardRuntime>;
+  model?: Model<Api>;
+}): string {
+  const parts = [
+    `sessionKey=${params.runtime?.sessionKey ?? "unknown"}`,
+    `runId=${params.runtime?.runId ?? "unknown"}`,
+    `provider=${params.runtime?.provider ?? "unknown"}`,
+    `modelId=${params.runtime?.modelId ?? params.model?.id ?? "unknown"}`,
+  ];
+  return parts.join(" ");
+}
+
 function formatToolFailureMeta(details: unknown): string | undefined {
   if (!details || typeof details !== "object") {
     return undefined;
@@ -177,6 +191,20 @@ function formatToolFailuresSection(failures: ToolFailure[]): string {
 
 function isRealConversationMessage(message: AgentMessage): boolean {
   return message.role === "user" || message.role === "assistant" || message.role === "toolResult";
+}
+
+function summarizeMessageRoles(messages: AgentMessage[]): string {
+  const counts = new Map<string, number>();
+  for (const message of messages) {
+    const role =
+      typeof (message as { role?: unknown }).role === "string"
+        ? ((message as { role: string }).role ?? "unknown")
+        : "unknown";
+    counts.set(role, (counts.get(role) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([role, count]) => `${role}:${count}`)
+    .join(",");
 }
 
 function computeFileLists(fileOps: FileOperations): {
@@ -699,8 +727,18 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
   api.on("session_before_compact", async (event, ctx) => {
     const { preparation, customInstructions, signal } = event;
     if (!preparation.messagesToSummarize.some(isRealConversationMessage)) {
+      const reserveTokens =
+        typeof preparation.settings?.reserveTokens === "number" &&
+        Number.isFinite(preparation.settings.reserveTokens)
+          ? Math.max(1, Math.floor(preparation.settings.reserveTokens))
+          : "unknown";
       log.warn(
-        "Compaction safeguard: cancelling compaction with no real conversation messages to summarize.",
+        "Compaction safeguard: cancelling compaction with no real conversation messages to summarize. " +
+          `summarize.count=${preparation.messagesToSummarize.length} ` +
+          `summarize.roles=${summarizeMessageRoles(preparation.messagesToSummarize)} ` +
+          `turnPrefix.count=${(preparation.turnPrefixMessages ?? []).length} ` +
+          `turnPrefix.roles=${summarizeMessageRoles(preparation.turnPrefixMessages ?? [])} ` +
+          `reserveTokens=${reserveTokens}`,
       );
       return { cancel: true };
     }
@@ -721,13 +759,15 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
     };
     const identifierPolicy = runtime?.identifierPolicy ?? "strict";
     const model = ctx.model ?? runtime?.model;
+    const runtimeLogContext = buildCompactionRuntimeLogContext({ runtime, model });
     if (!model) {
       // Log warning once per session when both models are missing (diagnostic for future issues).
       // Use a WeakSet to track which session managers have already logged the warning.
       if (!ctx.model && !runtime?.model && !missedModelWarningSessions.has(ctx.sessionManager)) {
         missedModelWarningSessions.add(ctx.sessionManager);
-        console.warn(
-          "[compaction-safeguard] Both ctx.model and runtime.model are undefined. " +
+        log.warn(
+          `[compaction-safeguard] missing compaction model ${runtimeLogContext} ` +
+            "reason=ctx_and_runtime_model_undefined " +
             "Compaction summarization will not run. This indicates extensionRunner.initialize() " +
             "was not called and model was not passed through runtime registry.",
         );
@@ -737,8 +777,9 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
 
     const apiKey = await ctx.modelRegistry.getApiKey(model);
     if (!apiKey) {
-      console.warn(
-        "Compaction safeguard: no API key available; cancelling compaction to preserve history.",
+      log.warn(
+        `[compaction-safeguard] missing API key ${runtimeLogContext} ` +
+          "reason=no_api_key cancelling compaction to preserve history.",
       );
       return { cancel: true };
     }

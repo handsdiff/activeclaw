@@ -47,6 +47,42 @@ function resolveOriginRoutingMetadata(items: FollowupRun[]): OriginRoutingMetada
   };
 }
 
+function mergeEphemeralSystemPrompts(items: FollowupRun[]): string | undefined {
+  const blocks: string[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    const block = item.ephemeralSystemPrompt?.trim();
+    if (!block || seen.has(block)) {
+      continue;
+    }
+    seen.add(block);
+    blocks.push(block);
+  }
+  return blocks.length > 0 ? blocks.join("\n\n") : undefined;
+}
+
+function mergeEphemeralSystemPromptBlocks(blocks: Array<string | undefined>): string | undefined {
+  const merged: string[] = [];
+  const seen = new Set<string>();
+  for (const block of blocks) {
+    const trimmed = block?.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    merged.push(trimmed);
+  }
+  return merged.length > 0 ? merged.join("\n\n") : undefined;
+}
+
+function clearFollowupQueueSummaryMetadata(queue: {
+  summaryEphemeralSystemPrompts?: string[];
+}): void {
+  if (Array.isArray(queue.summaryEphemeralSystemPrompts)) {
+    queue.summaryEphemeralSystemPrompts.length = 0;
+  }
+}
+
 function resolveCrossChannelKey(item: FollowupRun): { cross?: true; key?: string } {
   const { originatingChannel: channel, originatingTo: to, originatingAccountId: accountId } = item;
   const threadId = item.originatingThreadId;
@@ -109,6 +145,10 @@ export function scheduleFollowupDrain(
           }
 
           const routing = resolveOriginRoutingMetadata(items);
+          const ephemeralSystemPrompt = mergeEphemeralSystemPromptBlocks([
+            ...queue.summaryEphemeralSystemPrompts,
+            mergeEphemeralSystemPrompts(items),
+          ]);
 
           const prompt = buildCollectPrompt({
             title: "[Queued messages while agent was busy]",
@@ -118,6 +158,7 @@ export function scheduleFollowupDrain(
           });
           await runFollowup({
             prompt,
+            ephemeralSystemPrompt,
             run,
             enqueuedAt: Date.now(),
             ...routing,
@@ -125,6 +166,7 @@ export function scheduleFollowupDrain(
           queue.items.splice(0, items.length);
           if (summary) {
             clearQueueSummaryState(queue);
+            clearFollowupQueueSummaryMetadata(queue);
           }
           continue;
         }
@@ -139,6 +181,10 @@ export function scheduleFollowupDrain(
             !(await drainNextQueueItem(queue.items, async (item) => {
               await runFollowup({
                 prompt: summaryPrompt,
+                ephemeralSystemPrompt: mergeEphemeralSystemPromptBlocks([
+                  ...queue.summaryEphemeralSystemPrompts,
+                  item.ephemeralSystemPrompt,
+                ]),
                 run,
                 enqueuedAt: Date.now(),
                 originatingChannel: item.originatingChannel,
@@ -151,6 +197,7 @@ export function scheduleFollowupDrain(
             break;
           }
           clearQueueSummaryState(queue);
+          clearFollowupQueueSummaryMetadata(queue);
           continue;
         }
 

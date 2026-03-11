@@ -300,6 +300,45 @@ describe("agentCommand", () => {
     });
   });
 
+  it("moves internal events into extraSystemPrompt instead of the persisted user prompt", async () => {
+    await withTempHome(async (home) => {
+      const store = path.join(home, "sessions.json");
+      mockConfig(home, store);
+
+      await agentCommand(
+        {
+          message: "process the completion update",
+          to: "+1555",
+          extraSystemPrompt: "Agent-to-agent announce step",
+          internalEvents: [
+            {
+              type: "task_completion",
+              source: "cron",
+              childSessionKey: "agent:main:cron:test",
+              childSessionId: "cron-session",
+              announceType: "cron job",
+              taskLabel: "hourly check",
+              status: "ok",
+              statusLabel: "ok",
+              result: "Everything looks good.",
+              replyInstruction: "Send the user-facing update now.",
+            },
+          ],
+        },
+        runtime,
+      );
+
+      const callArgs = vi.mocked(runEmbeddedPiAgent).mock.calls.at(-1)?.[0];
+      expect(callArgs?.prompt).toBe("process the completion update");
+      expect(callArgs?.extraSystemPrompt).toContain("Agent-to-agent announce step");
+      expect(callArgs?.extraSystemPrompt).toContain(
+        "Ephemeral runtime context for this turn only.",
+      );
+      expect(callArgs?.extraSystemPrompt).toContain("OpenClaw runtime context (internal):");
+      expect(callArgs?.extraSystemPrompt).toContain("Everything looks good.");
+    });
+  });
+
   it.each([
     {
       name: "defaults senderIsOwner to true for local agent runs",

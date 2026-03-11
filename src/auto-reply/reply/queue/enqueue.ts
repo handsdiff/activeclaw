@@ -48,6 +48,13 @@ export function enqueueFollowupRun(
   const shouldEnqueue = applyQueueDropPolicy({
     queue,
     summarize: (item) => item.summaryLine?.trim() || item.prompt.trim(),
+    onDrop: (item) => {
+      const block = item.ephemeralSystemPrompt?.trim();
+      if (!block || queue.summaryEphemeralSystemPrompts.includes(block)) {
+        return;
+      }
+      queue.summaryEphemeralSystemPrompts.push(block);
+    },
   });
   if (!shouldEnqueue) {
     return false;

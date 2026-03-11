@@ -46,6 +46,10 @@ import {
   validateGeminiTurns,
 } from "../pi-embedded-helpers.js";
 import { createPreparedEmbeddedPiSettingsManager } from "../pi-project-settings.js";
+import {
+  applyPiAdaptiveKeepRecentBudget,
+  resolveOverflowCompactionKeepRecentTokens,
+} from "../pi-settings.js";
 import { createOpenClawCodingTools } from "../pi-tools.js";
 import { resolveSandboxContext } from "../sandbox.js";
 import { repairSessionFileIfNeeded } from "../session-file-repair.js";
@@ -120,6 +124,9 @@ export type CompactEmbeddedPiSessionParams = {
   reasoningLevel?: ReasoningLevel;
   bashElevated?: ExecElevatedDefaults;
   customInstructions?: string;
+  prompt?: string;
+  promptChars?: number;
+  promptImageCount?: number;
   tokenBudget?: number;
   force?: boolean;
   trigger?: "overflow" | "manual";
@@ -558,11 +565,68 @@ export async function compactEmbeddedPiSessionDirect(
         agentDir,
         cfg: params.config,
       });
+      const contextWindowInfo = resolveContextWindowInfo({
+        cfg: params.config,
+        provider,
+        modelId,
+        modelContextWindow: model.contextWindow,
+        defaultTokens: DEFAULT_CONTEXT_TOKENS,
+      });
+      const compactionBudget = applyPiAdaptiveKeepRecentBudget({
+        settingsManager,
+        contextWindowTokens: params.tokenBudget ?? contextWindowInfo.tokens,
+        systemPromptChars: appendPrompt.length,
+        promptImageCount: params.promptImageCount,
+      });
+      if (compactionBudget.didOverride) {
+        log.info(
+          `[compaction-budget] reduced keepRecentTokens before compaction ` +
+            `sessionKey=${params.sessionKey ?? params.sessionId} provider=${provider}/${modelId} ` +
+            `keepRecentTokens=${compactionBudget.keepRecentTokens} ` +
+            `cap=${compactionBudget.keepRecentTokensCap} reserveTokens=${compactionBudget.reserveTokens} ` +
+            `systemPromptTokens~=${compactionBudget.estimatedSystemPromptTokens} ` +
+            `promptImageTokens~=${compactionBudget.estimatedPromptImageTokens} ` +
+            `promptImages=${params.promptImageCount ?? 0} ` +
+            `availableHistoryTokens=${compactionBudget.availableHistoryTokens} ` +
+            `safetyMarginTokens=${compactionBudget.safetyMarginTokens}`,
+        );
+      }
+      if (params.trigger === "overflow") {
+        const currentKeepRecentTokens = settingsManager.getCompactionKeepRecentTokens();
+        const effectivePromptChars =
+          typeof params.promptChars === "number" && Number.isFinite(params.promptChars)
+            ? Math.max(0, Math.floor(params.promptChars))
+            : params.prompt?.length;
+        const overflowKeepRecentTokens = resolveOverflowCompactionKeepRecentTokens({
+          contextWindowTokens: params.tokenBudget ?? contextWindowInfo.tokens,
+          currentKeepRecentTokens,
+          reserveTokens: settingsManager.getCompactionReserveTokens(),
+          systemPromptChars: appendPrompt.length,
+          promptChars: effectivePromptChars,
+          promptImageCount: params.promptImageCount,
+        });
+        if (overflowKeepRecentTokens && overflowKeepRecentTokens < currentKeepRecentTokens) {
+          settingsManager.applyOverrides({
+            compaction: {
+              keepRecentTokens: overflowKeepRecentTokens,
+            },
+          });
+          log.info(
+            `[compaction-budget] overflow keepRecentTokens override ` +
+              `sessionKey=${params.sessionKey ?? params.sessionId} provider=${provider}/${modelId} ` +
+              `from=${currentKeepRecentTokens} to=${overflowKeepRecentTokens} ` +
+              `tokenBudget=${params.tokenBudget ?? "unknown"} systemPromptChars=${appendPrompt.length} ` +
+              `promptChars=${effectivePromptChars ?? 0} promptImages=${params.promptImageCount ?? 0}`,
+          );
+        }
+      }
       // Sets compaction/pruning runtime state and returns extension factories
       // that must be passed to the resource loader for the safeguard to be active.
       const extensionFactories = buildEmbeddedExtensionFactories({
         cfg: params.config,
         sessionManager,
+        sessionKey: params.sessionKey,
+        runId: params.runId ?? params.sessionId,
         provider,
         modelId,
         model,

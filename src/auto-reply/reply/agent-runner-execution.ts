@@ -100,6 +100,23 @@ export async function runAgentTurnWithFallback(params: {
   resolvedVerboseLevel: VerboseLevel;
 }): Promise<AgentRunLoopResult> {
   const TRANSIENT_HTTP_RETRY_DELAY_MS = 2_500;
+  const appendSystemPromptSection = (
+    base: string | undefined,
+    addition: string | undefined,
+  ): string | undefined => {
+    const trimmedAddition = addition?.trim();
+    if (!trimmedAddition) {
+      return base;
+    }
+    const trimmedBase = base?.trim();
+    if (!trimmedBase) {
+      return trimmedAddition;
+    }
+    if (trimmedBase.includes(trimmedAddition)) {
+      return trimmedBase;
+    }
+    return `${trimmedBase}\n\n${trimmedAddition}`;
+  };
   let didLogHeartbeatStrip = false;
   let autoCompactionCompleted = false;
   // Track payloads sent directly (not via pipeline) during tool flush to avoid duplicates.
@@ -127,6 +144,10 @@ export async function runAgentTurnWithFallback(params: {
       isControlUiVisible: shouldSurfaceToControlUi,
     });
   }
+  const effectiveExtraSystemPrompt = appendSystemPromptSection(
+    params.followupRun.run.extraSystemPrompt,
+    params.followupRun.ephemeralSystemPrompt,
+  );
   let runResult: Awaited<ReturnType<typeof runEmbeddedPiAgent>>;
   let fallbackProvider = params.followupRun.run.provider;
   let fallbackModel = params.followupRun.run.model;
@@ -230,7 +251,7 @@ export async function runAgentTurnWithFallback(params: {
                   thinkLevel: params.followupRun.run.thinkLevel,
                   timeoutMs: params.followupRun.run.timeoutMs,
                   runId,
-                  extraSystemPrompt: params.followupRun.run.extraSystemPrompt,
+                  extraSystemPrompt: effectiveExtraSystemPrompt,
                   ownerNumbers: params.followupRun.run.ownerNumbers,
                   cliSessionId,
                   bootstrapPromptWarningSignaturesSeen,
@@ -324,7 +345,7 @@ export async function runAgentTurnWithFallback(params: {
               ...senderContext,
               ...runBaseParams,
               prompt: params.commandBody,
-              extraSystemPrompt: params.followupRun.run.extraSystemPrompt,
+              extraSystemPrompt: effectiveExtraSystemPrompt,
               toolResultFormat: (() => {
                 const channel = resolveMessageChannel(
                   params.sessionCtx.Surface,

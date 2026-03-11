@@ -68,6 +68,7 @@ vi.mock("./queue.js", async () => {
 });
 
 const loadCronStoreMock = vi.fn();
+const readPostCompactionContextMock = vi.fn();
 vi.mock("../../cron/store.js", async () => {
   const actual = await vi.importActual<typeof import("../../cron/store.js")>("../../cron/store.js");
   return {
@@ -76,6 +77,12 @@ vi.mock("../../cron/store.js", async () => {
   };
 });
 
+vi.mock("./post-compaction-context.js", () => ({
+  readPostCompactionContext: (...args: unknown[]) => readPostCompactionContextMock(...args),
+}));
+
+import { queueEmbeddedPiMessage } from "../../agents/pi-embedded.js";
+import { defaultRuntime } from "../../runtime.js";
 import { runReplyAgent } from "./agent-runner.js";
 
 type RunWithModelFallbackParams = {
@@ -90,8 +97,10 @@ beforeEach(() => {
   runWithModelFallbackMock.mockClear();
   runtimeErrorMock.mockClear();
   loadCronStoreMock.mockClear();
+  readPostCompactionContextMock.mockReset();
   // Default: no cron jobs in store.
   loadCronStoreMock.mockResolvedValue({ version: 1, jobs: [] });
+  readPostCompactionContextMock.mockResolvedValue("");
   resetSystemEventsForTest();
 
   // Default: no provider switch; execute the chosen provider+model.
@@ -313,6 +322,71 @@ describe("runReplyAgent authProfileId fallback scoping", () => {
     expect(call.provider).toBe("openai-codex");
     expect(call.authProfileId).toBeUndefined();
     expect(call.authProfileIdSource).toBeUndefined();
+  });
+});
+
+describe("runReplyAgent steering prompts", () => {
+  it("uses steerPrompt for active streaming steer requests", async () => {
+    vi.mocked(queueEmbeddedPiMessage).mockReturnValueOnce(true);
+    const typing = createMockTypingController();
+
+    const result = await runReplyAgent({
+      commandBody: "hello",
+      followupRun: {
+        prompt: "persisted followup body",
+        steerPrompt: "ephemeral steer body with runtime events",
+        summaryLine: "hello",
+        enqueuedAt: Date.now(),
+        run: {
+          sessionId: "session",
+          sessionKey: "agent:main:telegram:direct:1",
+          messageProvider: "telegram",
+          sessionFile: "/tmp/session.jsonl",
+          workspaceDir: "/tmp",
+          config: {},
+          skillsSnapshot: {},
+          provider: "openai",
+          model: "gpt-5",
+          thinkLevel: "low",
+          verboseLevel: "off",
+          elevatedLevel: "off",
+          bashElevated: {
+            enabled: false,
+            allowed: false,
+            defaultLevel: "off",
+          },
+          timeoutMs: 1_000,
+          blockReplyBreak: "message_end",
+        },
+      } as FollowupRun,
+      queueKey: "agent:main:telegram:direct:1",
+      resolvedQueue: { mode: "steer" } as QueueSettings,
+      shouldSteer: true,
+      shouldFollowup: false,
+      isActive: true,
+      isStreaming: true,
+      typing,
+      sessionCtx: {
+        Provider: "telegram",
+        OriginatingTo: "chat:1",
+        AccountId: "acct",
+        MessageSid: "msg",
+      } as unknown as TemplateContext,
+      defaultModel: "openai/gpt-5",
+      resolvedVerboseLevel: "off",
+      isNewSession: false,
+      blockStreamingEnabled: false,
+      resolvedBlockStreamingBreak: "message_end",
+      shouldInjectGroupIntro: false,
+      typingMode: "instant",
+    });
+
+    expect(queueEmbeddedPiMessage).toHaveBeenCalledWith(
+      "session",
+      "ephemeral steer body with runtime events",
+    );
+    expect(result).toBeUndefined();
+    expect(runEmbeddedPiAgentMock).not.toHaveBeenCalled();
   });
 });
 
@@ -589,6 +663,84 @@ describe("runReplyAgent auto-compaction token update", () => {
     const queuedSystemEvents = peekSystemEvents(sessionKey);
     expect(queuedSystemEvents.some((event) => event.includes("Post-Compaction Audit"))).toBe(false);
     expect(queuedSystemEvents.some((event) => event.includes("WORKFLOW_AUTO.md"))).toBe(false);
+  });
+
+  it("logs post-compaction context refresh failures with the run workspace", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-post-compact-refresh-"));
+    const workspaceDir = path.join(tmp, "workspace");
+    await fs.mkdir(workspaceDir, { recursive: true });
+    const storePath = path.join(tmp, "sessions.json");
+    const sessionKey = "main";
+    const sessionEntry = {
+      sessionId: "session",
+      updatedAt: Date.now(),
+      totalTokens: 10_000,
+      compactionCount: 0,
+    };
+
+    await seedSessionStore({ storePath, sessionKey, entry: sessionEntry });
+    readPostCompactionContextMock.mockRejectedValueOnce(new Error("missing AGENTS.md"));
+    runEmbeddedPiAgentMock.mockImplementation(async (params: EmbeddedRunParams) => {
+      params.onAgentEvent?.({ stream: "compaction", data: { phase: "start" } });
+      params.onAgentEvent?.({ stream: "compaction", data: { phase: "end", willRetry: false } });
+      return {
+        payloads: [{ text: "done" }],
+        meta: {
+          agentMeta: {
+            usage: { input: 11_000, output: 500, total: 11_500 },
+            lastCallUsage: { input: 10_500, output: 500, total: 11_000 },
+            compactionCount: 1,
+          },
+        },
+      };
+    });
+
+    const config = {
+      agents: { defaults: { compaction: { memoryFlush: { enabled: false } } } },
+    };
+    const { typing, sessionCtx, resolvedQueue, followupRun } = createBaseRun({
+      storePath,
+      sessionEntry,
+      config,
+      workspaceDir,
+    });
+
+    await runReplyAgent({
+      commandBody: "hello",
+      followupRun,
+      queueKey: "main",
+      resolvedQueue,
+      shouldSteer: false,
+      shouldFollowup: false,
+      isActive: false,
+      isStreaming: false,
+      typing,
+      sessionCtx,
+      sessionEntry,
+      sessionStore: { [sessionKey]: sessionEntry },
+      sessionKey,
+      storePath,
+      defaultModel: "anthropic/claude-opus-4-5",
+      agentCfgContextTokens: 200_000,
+      resolvedVerboseLevel: "off",
+      isNewSession: false,
+      blockStreamingEnabled: false,
+      resolvedBlockStreamingBreak: "message_end",
+      shouldInjectGroupIntro: false,
+      typingMode: "instant",
+    });
+
+    expect(readPostCompactionContextMock).toHaveBeenCalledWith(workspaceDir, config);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(
+      vi
+        .mocked(defaultRuntime.log)
+        .mock.calls.some(
+          ([message]) =>
+            typeof message === "string" && message.includes(`workspace=${workspaceDir}`),
+        ),
+    ).toBe(true);
   });
 });
 
@@ -1321,6 +1473,7 @@ describe("runReplyAgent fallback reasoning tags", () => {
   type EmbeddedPiAgentParams = {
     enforceFinalTag?: boolean;
     prompt?: string;
+    trigger?: string;
   };
 
   function createRun(params?: {
@@ -1411,7 +1564,7 @@ describe("runReplyAgent fallback reasoning tags", () => {
 
   it("enforces <final> during memory flush on fallback providers", async () => {
     runEmbeddedPiAgentMock.mockImplementation(async (params: EmbeddedPiAgentParams) => {
-      if (params.prompt?.includes("Pre-compaction memory flush.")) {
+      if (params.trigger === "memory") {
         return { payloads: [], meta: {} };
       }
       return { payloads: [{ text: "ok" }], meta: {} };
@@ -1431,10 +1584,8 @@ describe("runReplyAgent fallback reasoning tags", () => {
       },
     });
 
-    const flushCall = runEmbeddedPiAgentMock.mock.calls.find(([params]) =>
-      (params as EmbeddedPiAgentParams | undefined)?.prompt?.includes(
-        "Pre-compaction memory flush.",
-      ),
+    const flushCall = runEmbeddedPiAgentMock.mock.calls.find(
+      ([params]) => (params as EmbeddedPiAgentParams | undefined)?.trigger === "memory",
     )?.[0] as EmbeddedPiAgentParams | undefined;
 
     expect(flushCall?.enforceFinalTag).toBe(true);

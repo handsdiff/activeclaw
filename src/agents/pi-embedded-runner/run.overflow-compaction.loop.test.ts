@@ -108,6 +108,32 @@ describe("overflow compaction in run loop", () => {
     expect(result.meta.error).toBeUndefined();
   });
 
+  it("passes the actual prompt image count from the failed attempt into overflow compaction", async () => {
+    mockedRunEmbeddedAttempt
+      .mockResolvedValueOnce(
+        makeAttemptResult({
+          promptError: makeOverflowError(),
+          promptChars: 12_345,
+          promptImageCount: 3,
+        }),
+      )
+      .mockResolvedValueOnce(makeAttemptResult({ promptError: null }));
+
+    mockedCompactDirect.mockResolvedValueOnce(
+      makeCompactionSuccess({
+        summary: "Compacted session",
+        firstKeptEntryId: "entry-8",
+        tokensBefore: 150000,
+      }),
+    );
+
+    await runEmbeddedPiAgent(baseParams);
+
+    expect(mockedCompactDirect).toHaveBeenCalledWith(
+      expect.objectContaining({ promptChars: 12_345, promptImageCount: 3 }),
+    );
+  });
+
   it("returns error if compaction fails", async () => {
     const overflowError = makeOverflowError();
 
@@ -154,6 +180,41 @@ describe("overflow compaction in run loop", () => {
     );
     expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(2);
     expect(log.info).toHaveBeenCalledWith(expect.stringContaining("Truncated 1 tool result(s)"));
+    expect(result.meta.error).toBeUndefined();
+  });
+
+  it("tries tool-result truncation before a blind retry when overflow survives in-attempt compaction", async () => {
+    mockedRunEmbeddedAttempt
+      .mockResolvedValueOnce(
+        makeAttemptResult({
+          promptError: makeOverflowError(),
+          compactionCount: 1,
+          messagesSnapshot: [
+            {
+              role: "assistant",
+              content: "big tool output",
+            } as unknown as EmbeddedRunAttemptResult["messagesSnapshot"][number],
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(makeAttemptResult({ promptError: null }));
+
+    mockedSessionLikelyHasOversizedToolResults.mockReturnValue(true);
+    mockedTruncateOversizedToolResultsInSession.mockResolvedValueOnce({
+      truncated: true,
+      truncatedCount: 1,
+    });
+
+    const result = await runEmbeddedPiAgent(baseParams);
+
+    expect(mockedCompactDirect).not.toHaveBeenCalled();
+    expect(mockedTruncateOversizedToolResultsInSession).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionFile: "/tmp/session.json" }),
+    );
+    expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(2);
+    expect(log.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("retrying prompt without additional compaction"),
+    );
     expect(result.meta.error).toBeUndefined();
   });
 
@@ -231,7 +292,7 @@ describe("overflow compaction in run loop", () => {
     expect(result.meta.error).toBeUndefined();
   });
 
-  it("does not attempt compaction for compaction_failure errors", async () => {
+  it("attempts explicit overflow compaction after compaction_failure no-ops", async () => {
     const compactionFailureError = new Error(
       "request_too_large: summarization failed - Request size exceeds model context window",
     );
@@ -239,12 +300,20 @@ describe("overflow compaction in run loop", () => {
     mockedRunEmbeddedAttempt.mockResolvedValue(
       makeAttemptResult({ promptError: compactionFailureError }),
     );
+    mockedCompactDirect.mockResolvedValueOnce({
+      ok: false,
+      compacted: false,
+      reason: "nothing to compact",
+    });
 
     const result = await runEmbeddedPiAgent(baseParams);
 
-    expect(mockedCompactDirect).not.toHaveBeenCalled();
+    expect(mockedCompactDirect).toHaveBeenCalledTimes(1);
     expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(1);
     expect(result.meta.error?.kind).toBe("compaction_failure");
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.stringContaining("compaction no-op (attempt 1/3); attempting auto-compaction"),
+    );
   });
 
   it("retries after successful compaction on assistant context overflow errors", async () => {

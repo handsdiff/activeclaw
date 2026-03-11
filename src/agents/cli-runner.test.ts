@@ -107,6 +107,73 @@ describe("runCliAgent with process supervisor", () => {
     expect(input.scopeKey).toContain("thread-123");
   });
 
+  it("inlines extra system prompt into resumed Claude CLI prompts when append-system-prompt is unavailable", async () => {
+    supervisorSpawnMock.mockResolvedValueOnce(
+      createManagedRun({
+        reason: "exit",
+        exitCode: 0,
+        exitSignal: null,
+        durationMs: 50,
+        stdout: '{"result":"ok"}',
+        stderr: "",
+        timedOut: false,
+        noOutputTimedOut: false,
+      }),
+    );
+
+    await runCliAgent({
+      sessionId: "s1",
+      sessionFile: "/tmp/session.jsonl",
+      workspaceDir: "/tmp",
+      prompt: "hi",
+      provider: "claude-cli",
+      model: "sonnet",
+      timeoutMs: 1_000,
+      runId: "run-claude-resume",
+      cliSessionId: "claude-thread-123",
+      extraSystemPrompt: "Ephemeral runtime context for this turn only.",
+    });
+
+    const input = supervisorSpawnMock.mock.calls.at(-1)?.[0] as {
+      argv?: string[];
+    };
+    expect(input.argv).not.toContain("--append-system-prompt");
+    expect(input.argv?.join(" ")).toContain("Ephemeral runtime context for this turn only.");
+  });
+
+  it("inlines extra system prompt into Codex CLI prompts", async () => {
+    supervisorSpawnMock.mockResolvedValueOnce(
+      createManagedRun({
+        reason: "exit",
+        exitCode: 0,
+        exitSignal: null,
+        durationMs: 50,
+        stdout: '{"type":"message","item":{"type":"message","text":"ok"}}',
+        stderr: "",
+        timedOut: false,
+        noOutputTimedOut: false,
+      }),
+    );
+
+    await runCliAgent({
+      sessionId: "s1",
+      sessionFile: "/tmp/session.jsonl",
+      workspaceDir: "/tmp",
+      prompt: "hi",
+      provider: "codex-cli",
+      model: "gpt-5.2-codex",
+      timeoutMs: 1_000,
+      runId: "run-codex-inline",
+      cliSessionId: "codex-thread-123",
+      extraSystemPrompt: "Ephemeral runtime context for this turn only.",
+    });
+
+    const input = supervisorSpawnMock.mock.calls.at(-1)?.[0] as {
+      argv?: string[];
+    };
+    expect(input.argv?.join(" ")).toContain("Ephemeral runtime context for this turn only.");
+  });
+
   it("fails with timeout when no-output watchdog trips", async () => {
     supervisorSpawnMock.mockResolvedValueOnce(
       createManagedRun({

@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { SettingsManager } from "@mariozechner/pi-coding-agent";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildEmbeddedPiSettingsSnapshot,
+  createEmbeddedPiSettingsManager,
   DEFAULT_EMBEDDED_PI_PROJECT_SETTINGS_POLICY,
   resolveEmbeddedPiProjectSettingsPolicy,
 } from "./pi-project-settings.js";
@@ -72,5 +74,36 @@ describe("buildEmbeddedPiSettingsSnapshot", () => {
     expect(snapshot.shellCommandPrefix).toBe("echo hacked &&");
     expect(snapshot.compaction?.reserveTokens).toBe(32_000);
     expect(snapshot.hideThinkingBlock).toBe(true);
+  });
+});
+
+describe("createEmbeddedPiSettingsManager", () => {
+  it("returns an in-memory snapshot even in trusted mode", () => {
+    const fileBackedManager = {
+      getGlobalSettings: () => ({
+        shellPath: "/bin/zsh",
+        compaction: { reserveTokens: 20_000, keepRecentTokens: 80_000 },
+      }),
+      getProjectSettings: () => ({
+        shellPath: "/tmp/project-shell",
+        compaction: { keepRecentTokens: 60_000 },
+      }),
+      applyOverrides: vi.fn(),
+    } as unknown as SettingsManager;
+    const createSpy = vi.spyOn(SettingsManager, "create").mockReturnValue(fileBackedManager);
+
+    const manager = createEmbeddedPiSettingsManager({
+      cwd: "/tmp/workspace",
+      agentDir: "/tmp/agent",
+      cfg: {
+        agents: { defaults: { embeddedPi: { projectSettingsPolicy: "trusted" } } },
+      },
+    });
+
+    expect(manager).not.toBe(fileBackedManager);
+    expect(manager.getGlobalSettings().shellPath).toBe("/tmp/project-shell");
+    expect(manager.getGlobalSettings().compaction?.keepRecentTokens).toBe(60_000);
+
+    createSpy.mockRestore();
   });
 });

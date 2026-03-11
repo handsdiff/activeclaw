@@ -935,12 +935,21 @@ export async function runEmbeddedPiAgent(
             );
             const isCompactionFailure = isCompactionFailureError(errorText);
             const hadAttemptLevelCompaction = attemptCompactionCount > 0;
+            const contextWindowTokens = ctxInfo.tokens;
+            const hasOversizedToolResults = attempt.messagesSnapshot
+              ? sessionLikelyHasOversizedToolResults({
+                  messages: attempt.messagesSnapshot,
+                  contextWindowTokens,
+                })
+              : false;
             // If this attempt already compacted (SDK auto-compaction), avoid immediately
-            // running another explicit compaction for the same overflow trigger.
+            // running another explicit compaction for the same overflow trigger unless
+            // the surviving overflow still looks like oversized tool-result pressure.
             if (
               !isCompactionFailure &&
               hadAttemptLevelCompaction &&
-              overflowCompactionAttempts < MAX_OVERFLOW_COMPACTION_ATTEMPTS
+              overflowCompactionAttempts < MAX_OVERFLOW_COMPACTION_ATTEMPTS &&
+              !(!toolResultTruncationAttempted && hasOversizedToolResults)
             ) {
               overflowCompactionAttempts++;
               log.warn(
@@ -948,23 +957,26 @@ export async function runEmbeddedPiAgent(
               );
               continue;
             }
-            // Attempt explicit overflow compaction only when this attempt did not
-            // already auto-compact.
+            // Attempt explicit overflow compaction when the attempt did not already
+            // auto-compact, or when in-attempt compaction no-op'd with a
+            // compaction_failure. The latter lets the dedicated overflow path retry
+            // with a much smaller keepRecentTokens budget.
             if (
-              !isCompactionFailure &&
-              !hadAttemptLevelCompaction &&
+              (isCompactionFailure || !hadAttemptLevelCompaction) &&
               overflowCompactionAttempts < MAX_OVERFLOW_COMPACTION_ATTEMPTS
             ) {
               if (log.isEnabled("debug")) {
                 log.debug(
                   `[compaction-diag] decision diagId=${overflowDiagId} branch=compact ` +
-                    `isCompactionFailure=${isCompactionFailure} hasOversizedToolResults=unknown ` +
+                    `isCompactionFailure=${isCompactionFailure} hasOversizedToolResults=${hasOversizedToolResults} ` +
                     `attempt=${overflowCompactionAttempts + 1} maxAttempts=${MAX_OVERFLOW_COMPACTION_ATTEMPTS}`,
                 );
               }
               overflowCompactionAttempts++;
               log.warn(
-                `context overflow detected (attempt ${overflowCompactionAttempts}/${MAX_OVERFLOW_COMPACTION_ATTEMPTS}); attempting auto-compaction for ${provider}/${modelId}`,
+                `${isCompactionFailure ? "compaction no-op" : "context overflow detected"} ` +
+                  `(attempt ${overflowCompactionAttempts}/${MAX_OVERFLOW_COMPACTION_ATTEMPTS}); ` +
+                  `attempting auto-compaction for ${provider}/${modelId}`,
               );
               const compactResult = await contextEngine.compact({
                 sessionId: params.sessionId,
@@ -986,6 +998,9 @@ export async function runEmbeddedPiAgent(
                   provider,
                   model: modelId,
                   runId: params.runId,
+                  prompt: params.prompt,
+                  promptChars: attempt.promptChars,
+                  promptImageCount: attempt.promptImageCount,
                   thinkLevel,
                   reasoningLevel: params.reasoningLevel,
                   bashElevated: params.bashElevated,
@@ -1010,19 +1025,11 @@ export async function runEmbeddedPiAgent(
             // This handles the case where a single tool result exceeds the
             // context window and compaction cannot reduce it further.
             if (!toolResultTruncationAttempted) {
-              const contextWindowTokens = ctxInfo.tokens;
-              const hasOversized = attempt.messagesSnapshot
-                ? sessionLikelyHasOversizedToolResults({
-                    messages: attempt.messagesSnapshot,
-                    contextWindowTokens,
-                  })
-                : false;
-
-              if (hasOversized) {
+              if (hasOversizedToolResults) {
                 if (log.isEnabled("debug")) {
                   log.debug(
                     `[compaction-diag] decision diagId=${overflowDiagId} branch=truncate_tool_results ` +
-                      `isCompactionFailure=${isCompactionFailure} hasOversizedToolResults=${hasOversized} ` +
+                      `isCompactionFailure=${isCompactionFailure} hasOversizedToolResults=${hasOversizedToolResults} ` +
                       `attempt=${overflowCompactionAttempts} maxAttempts=${MAX_OVERFLOW_COMPACTION_ATTEMPTS}`,
                   );
                 }
@@ -1051,7 +1058,7 @@ export async function runEmbeddedPiAgent(
               } else if (log.isEnabled("debug")) {
                 log.debug(
                   `[compaction-diag] decision diagId=${overflowDiagId} branch=give_up ` +
-                    `isCompactionFailure=${isCompactionFailure} hasOversizedToolResults=${hasOversized} ` +
+                    `isCompactionFailure=${isCompactionFailure} hasOversizedToolResults=${hasOversizedToolResults} ` +
                     `attempt=${overflowCompactionAttempts} maxAttempts=${MAX_OVERFLOW_COMPACTION_ATTEMPTS}`,
                 );
               }

@@ -32,6 +32,7 @@ import {
   resolveModelFallbackOptions,
 } from "./agent-runner-utils.js";
 import {
+  DEFAULT_MEMORY_FLUSH_TRIGGER_PROMPT,
   hasAlreadyFlushedForCurrentCompaction,
   resolveMemoryFlushContextWindowTokens,
   resolveMemoryFlushPromptForRun,
@@ -52,6 +53,19 @@ export function estimatePromptTokensForMemoryFlush(prompt?: string): number | un
     return undefined;
   }
   return Math.ceil(tokens);
+}
+
+function sumPromptTokenEstimates(...values: Array<number | undefined>): number | undefined {
+  let total = 0;
+  let sawValue = false;
+  for (const value of values) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+      continue;
+    }
+    total += value;
+    sawValue = true;
+  }
+  return sawValue ? total : undefined;
 }
 
 export function resolveEffectivePromptTokens(
@@ -295,6 +309,13 @@ export async function runMemoryFlushIfNeeded(params: {
   const promptTokenEstimate = estimatePromptTokensForMemoryFlush(
     params.promptForEstimate ?? params.followupRun.prompt,
   );
+  const ephemeralSystemPromptTokenEstimate = estimatePromptTokensForMemoryFlush(
+    params.followupRun.ephemeralSystemPrompt,
+  );
+  const combinedPromptTokenEstimate = sumPromptTokenEstimates(
+    promptTokenEstimate,
+    ephemeralSystemPromptTokenEstimate,
+  );
   const persistedPromptTokensRaw = entry?.totalTokens;
   const persistedPromptTokens =
     typeof persistedPromptTokensRaw === "number" &&
@@ -319,10 +340,10 @@ export async function runMemoryFlushIfNeeded(params: {
     canAttemptFlush &&
     entry &&
     hasFreshPersistedPromptTokens &&
-    typeof promptTokenEstimate === "number" &&
-    Number.isFinite(promptTokenEstimate) &&
+    typeof combinedPromptTokenEstimate === "number" &&
+    Number.isFinite(combinedPromptTokenEstimate) &&
     flushThreshold > 0 &&
-    (persistedPromptTokens ?? 0) + promptTokenEstimate >=
+    (persistedPromptTokens ?? 0) + combinedPromptTokenEstimate >=
       flushThreshold - TRANSCRIPT_OUTPUT_READ_BUFFER_TOKENS;
 
   const shouldReadTranscript = Boolean(
@@ -404,7 +425,7 @@ export async function runMemoryFlushIfNeeded(params: {
     ? resolveEffectivePromptTokens(
         promptTokensSnapshot,
         transcriptOutputTokens,
-        promptTokenEstimate,
+        combinedPromptTokenEstimate,
       )
     : undefined;
   const tokenCountForFlush =
@@ -422,7 +443,10 @@ export async function runMemoryFlushIfNeeded(params: {
       `isHeartbeat=${params.isHeartbeat} isCli=${isCli} memoryFlushWritable=${memoryFlushWritable} ` +
       `compactionCount=${entry?.compactionCount ?? 0} memoryFlushCompactionCount=${entry?.memoryFlushCompactionCount ?? "undefined"} ` +
       `persistedPromptTokens=${persistedPromptTokens ?? "undefined"} persistedFresh=${entry?.totalTokensFresh === true} ` +
-      `promptTokensEst=${promptTokenEstimate ?? "undefined"} transcriptPromptTokens=${transcriptPromptTokens ?? "undefined"} transcriptOutputTokens=${transcriptOutputTokens ?? "undefined"} ` +
+      `promptTokensEst=${promptTokenEstimate ?? "undefined"} ` +
+      `ephemeralSystemPromptTokensEst=${ephemeralSystemPromptTokenEstimate ?? "undefined"} ` +
+      `combinedPromptTokensEst=${combinedPromptTokenEstimate ?? "undefined"} ` +
+      `transcriptPromptTokens=${transcriptPromptTokens ?? "undefined"} transcriptOutputTokens=${transcriptOutputTokens ?? "undefined"} ` +
       `projectedTokenCount=${projectedTokenCount ?? "undefined"} transcriptBytes=${transcriptByteSize ?? "undefined"} ` +
       `forceFlushTranscriptBytes=${forceFlushTranscriptBytes} forceFlushByTranscriptSize=${shouldForceFlushByTranscriptSize}`,
   );
@@ -465,9 +489,15 @@ export async function runMemoryFlushIfNeeded(params: {
     });
   }
   let memoryCompactionCompleted = false;
+  const flushInstructions = resolveMemoryFlushPromptForRun({
+    prompt: memoryFlushSettings.prompt,
+    cfg: params.cfg,
+  });
   const flushSystemPrompt = [
     params.followupRun.run.extraSystemPrompt,
     memoryFlushSettings.systemPrompt,
+    "Ephemeral maintenance instructions for this turn only.",
+    flushInstructions,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -494,10 +524,12 @@ export async function runMemoryFlushIfNeeded(params: {
           ...senderContext,
           ...runBaseParams,
           trigger: "memory",
-          prompt: resolveMemoryFlushPromptForRun({
-            prompt: memoryFlushSettings.prompt,
-            cfg: params.cfg,
-          }),
+          inputProvenance: {
+            kind: "internal_system",
+            sourceTool: "memory_flush",
+            persistence: "ephemeral",
+          },
+          prompt: DEFAULT_MEMORY_FLUSH_TRIGGER_PROMPT,
           extraSystemPrompt: flushSystemPrompt,
           bootstrapPromptWarningSignaturesSeen,
           bootstrapPromptWarningSignature:

@@ -190,7 +190,15 @@ export async function runReplyAgent(params: {
   };
 
   if (shouldSteer && isStreaming) {
-    const steered = queueEmbeddedPiMessage(followupRun.run.sessionId, followupRun.prompt);
+    const steerPrompt = followupRun.steerPrompt ?? followupRun.prompt;
+    if (steerPrompt !== followupRun.prompt) {
+      defaultRuntime.log(
+        `[debug] steering active run with steerPrompt ` +
+          `session=${followupRun.run.sessionKey ?? followupRun.run.sessionId} ` +
+          `promptChars=${followupRun.prompt.length} steerPromptChars=${steerPrompt.length}`,
+      );
+    }
+    const steered = queueEmbeddedPiMessage(followupRun.run.sessionId, steerPrompt);
     if (steered && !shouldFollowup) {
       await touchActiveSessionEntry();
       typing.cleanup();
@@ -685,15 +693,19 @@ export async function runReplyAgent(params: {
 
       // Inject post-compaction workspace context for the next agent turn
       if (sessionKey) {
-        const workspaceDir = process.cwd();
+        const workspaceDir = followupRun.run.workspaceDir;
         readPostCompactionContext(workspaceDir, cfg)
           .then((contextContent) => {
             if (contextContent) {
               enqueueSystemEvent(contextContent, { sessionKey });
             }
           })
-          .catch(() => {
-            // Silent failure — post-compaction context is best-effort
+          .catch((error) => {
+            defaultRuntime.log(
+              `[warn] post-compaction context refresh failed ` +
+                `session=${sessionKey} workspace=${workspaceDir} ` +
+                `reason=${error instanceof Error ? error.message : String(error)}`,
+            );
           });
       }
 

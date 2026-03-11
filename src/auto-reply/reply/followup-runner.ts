@@ -62,6 +62,24 @@ export function createFollowupRunner(params: {
     isHeartbeat: opts?.isHeartbeat === true,
   });
 
+  const appendSystemPromptSection = (
+    base: string | undefined,
+    addition: string | undefined,
+  ): string | undefined => {
+    const trimmedAddition = addition?.trim();
+    if (!trimmedAddition) {
+      return base;
+    }
+    const trimmedBase = base?.trim();
+    if (!trimmedBase) {
+      return trimmedAddition;
+    }
+    if (trimmedBase.includes(trimmedAddition)) {
+      return trimmedBase;
+    }
+    return `${trimmedBase}\n\n${trimmedAddition}`;
+  };
+
   /**
    * Sends followup payloads, routing to the originating channel if set.
    *
@@ -149,6 +167,10 @@ export function createFollowupRunner(params: {
       let runResult: Awaited<ReturnType<typeof runEmbeddedPiAgent>>;
       let fallbackProvider = queued.run.provider;
       let fallbackModel = queued.run.model;
+      const effectiveExtraSystemPrompt = appendSystemPromptSection(
+        queued.run.extraSystemPrompt,
+        queued.ephemeralSystemPrompt,
+      );
       const activeSessionEntry =
         (sessionKey ? sessionStore?.[sessionKey] : undefined) ?? sessionEntry;
       let bootstrapPromptWarningSignaturesSeen = resolveBootstrapWarningSignaturesSeen(
@@ -194,7 +216,7 @@ export function createFollowupRunner(params: {
               config: queued.run.config,
               skillsSnapshot: queued.run.skillsSnapshot,
               prompt: queued.prompt,
-              extraSystemPrompt: queued.run.extraSystemPrompt,
+              extraSystemPrompt: effectiveExtraSystemPrompt,
               ownerNumbers: queued.run.ownerNumbers,
               enforceFinalTag: queued.run.enforceFinalTag,
               provider,

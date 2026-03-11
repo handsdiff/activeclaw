@@ -5,12 +5,26 @@ import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { shortDiagnosticFingerprint, summarizeMemoryStatus } from "../../memory/diagnostics.js";
 import { getMemorySearchManager } from "../../memory/search-manager.js";
 import type { MemorySearchResult } from "../../memory/types.js";
+import type { MemoryProviderStatus } from "../../memory/types.js";
 
 const log = createSubsystemLogger("memory-recall");
 
 /** Well-known bootstrap filenames that are always injected into system prompt. */
 const DEFAULT_BOOTSTRAPPED_FILENAMES = new Set(["MEMORY.md", "memory.md"]);
 const MEMORY_LIKE_PATH_SEGMENTS = new Set(["memory", "memory.md"]);
+
+function summarizeManagerStatusSafe(manager: {
+  status?: (() => MemoryProviderStatus) | undefined;
+}): ReturnType<typeof summarizeMemoryStatus> | Record<string, never> {
+  if (typeof manager.status !== "function") {
+    return {};
+  }
+  try {
+    return summarizeMemoryStatus(manager.status());
+  } catch {
+    return {};
+  }
+}
 
 export type MemoryRecallSettings = {
   enabled: boolean;
@@ -131,7 +145,6 @@ export async function runPreTurnMemoryRecall(params: {
       sessionKey: params.sessionKey,
     });
   } catch (err) {
-    const status = manager.status();
     log.warn("memory recall: search failed", {
       agentId: params.agentId,
       sessionKey: params.sessionKey,
@@ -140,7 +153,7 @@ export async function runPreTurnMemoryRecall(params: {
       requestedMaxResults: requestCount,
       minScore: settings.minScore,
       err: String(err),
-      ...summarizeMemoryStatus(status),
+      ...summarizeManagerStatusSafe(manager),
     });
     return formatRecallBlock({
       searchSurfaceLines,
@@ -178,7 +191,6 @@ export async function runPreTurnMemoryRecall(params: {
 
   if (!results.length) {
     const elapsedMs = Date.now() - startMs;
-    const status = manager.status();
     log.info("memory recall: 0 results", {
       agentId: params.agentId,
       sessionKey: params.sessionKey,
@@ -187,7 +199,7 @@ export async function runPreTurnMemoryRecall(params: {
       queryFingerprint,
       requestedMaxResults: requestCount,
       minScore: settings.minScore,
-      ...summarizeMemoryStatus(status),
+      ...summarizeManagerStatusSafe(manager),
     });
     return formatRecallBlock({
       searchSurfaceLines,

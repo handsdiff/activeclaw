@@ -8,11 +8,16 @@ export const INPUT_PROVENANCE_KIND_VALUES = [
 
 export type InputProvenanceKind = (typeof INPUT_PROVENANCE_KIND_VALUES)[number];
 
+export const INPUT_PROVENANCE_PERSISTENCE_VALUES = ["persist", "ephemeral"] as const;
+
+export type InputProvenancePersistence = (typeof INPUT_PROVENANCE_PERSISTENCE_VALUES)[number];
+
 export type InputProvenance = {
   kind: InputProvenanceKind;
   sourceSessionKey?: string;
   sourceChannel?: string;
   sourceTool?: string;
+  persistence?: InputProvenancePersistence;
 };
 
 function normalizeOptionalString(value: unknown): string | undefined {
@@ -29,6 +34,13 @@ function isInputProvenanceKind(value: unknown): value is InputProvenanceKind {
   );
 }
 
+function isInputProvenancePersistence(value: unknown): value is InputProvenancePersistence {
+  return (
+    typeof value === "string" &&
+    (INPUT_PROVENANCE_PERSISTENCE_VALUES as readonly string[]).includes(value)
+  );
+}
+
 export function normalizeInputProvenance(value: unknown): InputProvenance | undefined {
   if (!value || typeof value !== "object") {
     return undefined;
@@ -42,6 +54,7 @@ export function normalizeInputProvenance(value: unknown): InputProvenance | unde
     sourceSessionKey: normalizeOptionalString(record.sourceSessionKey),
     sourceChannel: normalizeOptionalString(record.sourceChannel),
     sourceTool: normalizeOptionalString(record.sourceTool),
+    persistence: isInputProvenancePersistence(record.persistence) ? record.persistence : undefined,
   };
 }
 
@@ -67,6 +80,10 @@ export function applyInputProvenanceToUserMessage(
 
 export function isInterSessionInputProvenance(value: unknown): boolean {
   return normalizeInputProvenance(value)?.kind === "inter_session";
+}
+
+export function isEphemeralInputProvenance(value: unknown): boolean {
+  return normalizeInputProvenance(value)?.persistence === "ephemeral";
 }
 
 export function hasInterSessionUserProvenance(

@@ -8,6 +8,7 @@ import {
   SessionManager,
 } from "@mariozechner/pi-coding-agent";
 import { resolveHeartbeatPrompt } from "../../../auto-reply/heartbeat.js";
+import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../../../auto-reply/tokens.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
 import type { OpenClawConfig } from "../../../config/config.js";
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
@@ -20,6 +21,7 @@ import type {
   PluginHookBeforePromptBuildResult,
 } from "../../../plugins/types.js";
 import { isSubagentSessionKey } from "../../../routing/session-key.js";
+import { rewriteSessionTranscriptForPersistence } from "../../../sessions/persistence-filters.js";
 import { joinPresentTextSegments } from "../../../shared/text/join-segments.js";
 import { resolveSignalReactionLevel } from "../../../signal/reaction-level.js";
 import { resolveTelegramInlineButtonsScope } from "../../../telegram/inline-buttons.js";
@@ -67,7 +69,7 @@ import {
 } from "../../pi-embedded-helpers.js";
 import { subscribeEmbeddedPiSession } from "../../pi-embedded-subscribe.js";
 import { createPreparedEmbeddedPiSettingsManager } from "../../pi-project-settings.js";
-import { applyPiAutoCompactionGuard } from "../../pi-settings.js";
+import { applyPiAdaptiveKeepRecentBudget, applyPiAutoCompactionGuard } from "../../pi-settings.js";
 import { toClientToolDefinitions } from "../../pi-tool-definition-adapter.js";
 import { createOpenClawCodingTools, resolveToolLoopDetectionConfig } from "../../pi-tools.js";
 import { resolveSandboxContext } from "../../sandbox.js";
@@ -633,6 +635,65 @@ export function prependSystemPromptAddition(params: {
   return `${params.systemPromptAddition}\n\n${params.systemPrompt}`;
 }
 
+function extractAssistantTextForCleanup(message: AgentMessage | undefined): string {
+  if (!message || message.role !== "assistant") {
+    return "";
+  }
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") {
+    return content.trim();
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  const text = joinPresentTextSegments(
+    content
+      .map((block) => {
+        if (!block || typeof block !== "object") {
+          return undefined;
+        }
+        return typeof (block as { text?: unknown }).text === "string"
+          ? (block as { text: string }).text
+          : undefined;
+      })
+      .filter((value): value is string => typeof value === "string"),
+  );
+  return text?.trim() ?? "";
+}
+
+export function resolveSyntheticTurnCleanupReason(params: {
+  trigger?: string;
+  inputProvenanceKind?: string;
+  inputProvenanceSourceTool?: string;
+  inputProvenancePersistence?: string;
+  promptErrored: boolean;
+  compactionOccurredThisAttempt: boolean;
+  timedOutDuringCompaction: boolean;
+  didSendViaMessagingTool: boolean;
+  assistantText: string;
+}): string | undefined {
+  if (
+    params.promptErrored ||
+    params.compactionOccurredThisAttempt ||
+    params.timedOutDuringCompaction
+  ) {
+    return undefined;
+  }
+  if (params.trigger === "memory") {
+    return "memory maintenance turn";
+  }
+  if (
+    params.inputProvenanceKind === "inter_session" &&
+    params.inputProvenanceSourceTool === "subagent_announce" &&
+    params.inputProvenancePersistence === "ephemeral" &&
+    !params.didSendViaMessagingTool &&
+    isSilentReplyText(params.assistantText, SILENT_REPLY_TOKEN)
+  ) {
+    return "silent inter-session completion turn";
+  }
+  return undefined;
+}
+
 /** Build legacy compaction params passed into context-engine afterTurn hooks. */
 export function buildAfterTurnLegacyCompactionParams(params: {
   attempt: Pick<
@@ -1119,6 +1180,8 @@ export async function runEmbeddedAttempt(
       const extensionFactories = buildEmbeddedExtensionFactories({
         cfg: params.config,
         sessionManager,
+        sessionKey: params.sessionKey,
+        runId: params.runId,
         provider: params.provider,
         modelId: params.modelId,
         model: params.model,
@@ -1596,6 +1659,8 @@ export async function runEmbeddedAttempt(
       );
 
       let messagesSnapshot: AgentMessage[] = [];
+      let promptChars = params.prompt.length;
+      let promptImageCount = Math.max(0, params.images?.length ?? 0);
       let sessionIdUsed = activeSession.sessionId;
       const onAbort = () => {
         const reason = params.abortSignal ? getAbortReason(params.abortSignal) : undefined;
@@ -1652,6 +1717,7 @@ export async function runEmbeddedAttempt(
         {
           if (hookResult?.prependContext) {
             effectivePrompt = `${hookResult.prependContext}\n\n${params.prompt}`;
+            promptChars = effectivePrompt.length;
             log.debug(
               `hooks: prepended context to prompt (${hookResult.prependContext.length} chars)`,
             );
@@ -1700,6 +1766,7 @@ export async function runEmbeddedAttempt(
               `runId=${params.runId} sessionId=${params.sessionId}`,
           );
         }
+        const prePromptLeafId = sessionManager.getLeafId();
 
         try {
           // Idempotent cleanup for legacy sessions with persisted image payloads.
@@ -1731,6 +1798,29 @@ export async function runEmbeddedAttempt(
             messages: activeSession.messages,
             note: `images: prompt=${imageResult.images.length}`,
           });
+          promptImageCount = imageResult.images.length;
+
+          const compactionBudget = applyPiAdaptiveKeepRecentBudget({
+            settingsManager,
+            contextWindowTokens: params.contextTokenBudget ?? DEFAULT_CONTEXT_TOKENS,
+            systemPromptChars: systemPromptText.length,
+            promptChars: effectivePrompt.length,
+            promptImageCount: imageResult.images.length,
+          });
+          if (compactionBudget.didOverride) {
+            log.info(
+              `[compaction-budget] reduced keepRecentTokens for sessionKey=${params.sessionKey ?? params.sessionId} ` +
+                `provider=${params.provider}/${params.modelId} ` +
+                `keepRecentTokens=${compactionBudget.keepRecentTokens} ` +
+                `cap=${compactionBudget.keepRecentTokensCap} reserveTokens=${compactionBudget.reserveTokens} ` +
+                `systemPromptTokens~=${compactionBudget.estimatedSystemPromptTokens} ` +
+                `promptTokens~=${compactionBudget.estimatedPromptTokens} ` +
+                `promptImageTokens~=${compactionBudget.estimatedPromptImageTokens} ` +
+                `promptImages=${imageResult.images.length} ` +
+                `availableHistoryTokens=${compactionBudget.availableHistoryTokens} ` +
+                `safetyMarginTokens=${compactionBudget.safetyMarginTokens}`,
+            );
+          }
 
           // Diagnostic: log context sizes before prompt to help debug early overflow errors.
           if (log.isEnabled("debug")) {
@@ -1829,6 +1919,71 @@ export async function runEmbeddedAttempt(
         }
 
         const compactionOccurredThisAttempt = getCompactionCount() > 0;
+        const lastAssistantBeforeCleanup = activeSession.messages
+          .slice()
+          .toReversed()
+          .find((m) => m.role === "assistant");
+        const syntheticTurnCleanupReason = resolveSyntheticTurnCleanupReason({
+          trigger: params.trigger,
+          inputProvenanceKind: params.inputProvenance?.kind,
+          inputProvenanceSourceTool: params.inputProvenance?.sourceTool,
+          inputProvenancePersistence: params.inputProvenance?.persistence,
+          promptErrored: Boolean(promptError),
+          compactionOccurredThisAttempt,
+          timedOutDuringCompaction,
+          didSendViaMessagingTool: didSendViaMessagingTool(),
+          assistantText: extractAssistantTextForCleanup(lastAssistantBeforeCleanup),
+        });
+        if (syntheticTurnCleanupReason) {
+          if (prePromptLeafId) {
+            sessionManager.branch(prePromptLeafId);
+          } else {
+            sessionManager.resetLeaf();
+          }
+          const sessionContext = sessionManager.buildSessionContext();
+          activeSession.agent.replaceMessages(sessionContext.messages);
+          log.debug(
+            `rewound ${syntheticTurnCleanupReason} from transcript ` +
+              `runId=${params.runId} sessionId=${params.sessionId}`,
+          );
+        }
+        if (!timedOutDuringCompaction) {
+          try {
+            const transcriptRewrite = rewriteSessionTranscriptForPersistence({
+              sessionManager,
+              sessionKey: params.sessionKey,
+            });
+            if (transcriptRewrite.changed) {
+              const changeReasonSummary = Object.entries(transcriptRewrite.changeReasons)
+                .map(([reason, count]) => `${reason}:${count}`)
+                .join(",");
+              activeSession.agent.replaceMessages(transcriptRewrite.messages);
+              log.info(
+                `[transcript-persistence] sanitized session branch ` +
+                  `sessionKey=${params.sessionKey ?? params.sessionId} ` +
+                  `provider=${params.provider}/${params.modelId} ` +
+                  `rewrittenEntries=${transcriptRewrite.rewrittenEntries} ` +
+                  `droppedEntries=${transcriptRewrite.droppedEntries} ` +
+                  `rewriteFloorIndex=${transcriptRewrite.rewriteFloorIndex} ` +
+                  `skippedPreCompactionChanges=${transcriptRewrite.skippedPreCompactionChanges} ` +
+                  `reasons=${changeReasonSummary || "none"}`,
+              );
+            } else if (transcriptRewrite.skippedPreCompactionChanges > 0) {
+              log.debug(
+                `[transcript-persistence] skipped pre-compaction cleanup to preserve compaction anchors ` +
+                  `sessionKey=${params.sessionKey ?? params.sessionId} ` +
+                  `provider=${params.provider}/${params.modelId} ` +
+                  `rewriteFloorIndex=${transcriptRewrite.rewriteFloorIndex} ` +
+                  `skippedPreCompactionChanges=${transcriptRewrite.skippedPreCompactionChanges}`,
+              );
+            }
+          } catch (rewriteErr) {
+            log.warn(
+              `transcript persistence rewrite failed: sessionKey=${params.sessionKey ?? params.sessionId} ` +
+                `reason=${String(rewriteErr)}`,
+            );
+          }
+        }
 
         // Append cache-TTL timestamp AFTER prompt + compaction retry completes.
         // Previously this was before the prompt, which caused a custom entry to be
@@ -2053,6 +2208,8 @@ export async function runEmbeddedAttempt(
         ),
         attemptUsage: getUsageTotals(),
         compactionCount: getCompactionCount(),
+        promptChars,
+        promptImageCount,
         // Client tool call detected (OpenResponses hosted tools)
         clientToolCall: clientToolCallDetected ?? undefined,
       };

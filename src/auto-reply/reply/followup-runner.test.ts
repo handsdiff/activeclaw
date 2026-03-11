@@ -93,6 +93,36 @@ function createQueuedRun(
   };
 }
 
+describe("createFollowupRunner ephemeral system prompt", () => {
+  it("merges ephemeral system prompt into the actual followup run only", async () => {
+    runEmbeddedPiAgentMock.mockResolvedValueOnce({
+      payloads: [{ text: "ok" }],
+      meta: {},
+    });
+
+    const runner = createFollowupRunner({
+      typing: createMockTypingController(),
+      typingMode: "instant",
+      defaultModel: "anthropic/claude",
+    });
+
+    await runner(
+      createQueuedRun({
+        ephemeralSystemPrompt: "runtime-only events",
+        run: {
+          extraSystemPrompt: "persistent system context",
+        },
+      }),
+    );
+
+    expect(runEmbeddedPiAgentMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        extraSystemPrompt: "persistent system context\n\nruntime-only events",
+      }),
+    );
+  });
+});
+
 function mockCompactionRun(params: {
   willRetry: boolean;
   result: {

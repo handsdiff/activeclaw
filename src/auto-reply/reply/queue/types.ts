@@ -20,6 +20,17 @@ export type QueueDedupeMode = "message-id" | "prompt" | "none";
 
 export type FollowupRun = {
   prompt: string;
+  /**
+   * Optional per-turn system context that should be visible to the actual
+   * follow-up run but should not be baked into persisted queue prompt text.
+   */
+  ephemeralSystemPrompt?: string;
+  /**
+   * Optional steer-only prompt for active in-memory runs.
+   * This can include ephemeral runtime context that should not be persisted
+   * in queued/deferred follow-up prompts.
+   */
+  steerPrompt?: string;
   /** Provider message ID, when available (for deduplication). */
   messageId?: string;
   summaryLine?: string;

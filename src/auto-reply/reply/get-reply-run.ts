@@ -18,6 +18,7 @@ import {
 import { logVerbose } from "../../globals.js";
 import { clearCommandLane, getQueueSize } from "../../process/command-queue.js";
 import { normalizeMainKey } from "../../routing/session-key.js";
+import { buildEphemeralPromptBlock } from "../../sessions/ephemeral-context.js";
 import { isReasoningTagProvider } from "../../utils/provider-utils.js";
 import { hasControlCommand } from "../command-detection.js";
 import { buildInboundMediaNote } from "../media-note.js";
@@ -353,9 +354,14 @@ export async function runPreparedReply(
     isMainSession,
     isNewSession,
   });
-  const prependEvents = (body: string) => (eventsBlock ? `${eventsBlock}\n\n${body}` : body);
-  const bodyWithEvents = prependEvents(effectiveBaseBody);
-  prefixedBodyBase = prependEvents(prefixedBodyBase);
+  const runtimeSystemEventsPrompt = eventsBlock
+    ? buildEphemeralPromptBlock({
+        heading: "Ephemeral runtime system events for this turn only.",
+        description:
+          "These events are runtime-generated context, not user-authored conversation history.",
+        body: eventsBlock,
+      })
+    : undefined;
   prefixedBodyBase = appendUntrustedContext(prefixedBodyBase, sessionCtx.UntrustedContext);
   const threadStarterBody = ctx.ThreadStarterBody?.trim();
   const threadHistoryBody = ctx.ThreadHistoryBody?.trim();
@@ -429,12 +435,29 @@ export async function runPreparedReply(
     sessionEntry,
     resolveSessionFilePathOptions({ agentId, storePath }),
   );
-  // Use bodyWithEvents (events prepended, but no session hints / untrusted context) so
-  // deferred turns receive system events while keeping the same scope as effectiveBaseBody did.
-  const queueBodyBase = [threadContextNote, bodyWithEvents].filter(Boolean).join("\n\n");
+  // Queue/deferred path keeps the user-visible body scope only; runtime system
+  // events travel separately in followupRun.ephemeralSystemPrompt so they stay
+  // ephemeral and do not persist as transcript text or leak into memory-flush
+  // turns.
+  const queueBodyBase = [threadContextNote, effectiveBaseBody].filter(Boolean).join("\n\n");
   const queuedBody = mediaNote
     ? [mediaNote, mediaReplyHint, queueBodyBase].filter(Boolean).join("\n").trim()
     : queueBodyBase;
+  // Active steer uses only prompt text, so mirror runtime system events there
+  // using the same explicit ephemeral wrapper. Persistence rewrite strips that
+  // wrapper back out if the steered turn lands in transcript history.
+  const steerBodyBase = [threadContextNote, runtimeSystemEventsPrompt, effectiveBaseBody]
+    .filter(Boolean)
+    .join("\n\n");
+  const steerBody = mediaNote
+    ? [mediaNote, mediaReplyHint, steerBodyBase].filter(Boolean).join("\n").trim()
+    : steerBodyBase;
+  if (eventsBlock) {
+    logVerbose(
+      `[reply-runtime-events] session=${sessionKey ?? sessionIdFinal} eventsChars=${eventsBlock.length} ` +
+        `deferred=ephemeral-system-prompt steer=body`,
+    );
+  }
   const resolvedQueue = resolveQueueSettings({
     cfg,
     channel: sessionCtx.Provider,
@@ -470,6 +493,8 @@ export async function runPreparedReply(
   const authProfileIdSource = sessionEntry?.authProfileOverrideSource;
   const followupRun = {
     prompt: queuedBody,
+    ephemeralSystemPrompt: runtimeSystemEventsPrompt,
+    steerPrompt: steerBody,
     messageId: sessionCtx.MessageSidFull ?? sessionCtx.MessageSid,
     summaryLine: baseBodyTrimmedRaw,
     enqueuedAt: Date.now(),

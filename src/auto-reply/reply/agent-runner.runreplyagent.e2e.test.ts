@@ -1570,10 +1570,10 @@ describe("runReplyAgent memory flush", () => {
       });
 
       const flushCall = calls[0];
-      expect(flushCall?.prompt).toContain("Write notes.");
-      expect(flushCall?.prompt).toContain("NO_REPLY");
+      expect(flushCall?.prompt).toBe("Perform the pre-compaction memory flush now.");
       expect(flushCall?.extraSystemPrompt).toContain("extra system");
       expect(flushCall?.extraSystemPrompt).toContain("Flush memory now.");
+      expect(flushCall?.extraSystemPrompt).toContain("Write notes.");
       expect(flushCall?.extraSystemPrompt).toContain("NO_REPLY");
       expect(calls[1]?.prompt).toBe("hello");
     });
@@ -1662,10 +1662,10 @@ describe("runReplyAgent memory flush", () => {
 
       await seedSessionStore({ storePath, sessionKey, entry: sessionEntry });
 
-      const calls: Array<{ prompt?: string }> = [];
+      const calls: Array<{ prompt?: string; extraSystemPrompt?: string }> = [];
       state.runEmbeddedPiAgentMock.mockImplementation(async (params: EmbeddedRunParams) => {
-        calls.push({ prompt: params.prompt });
-        if (params.prompt?.includes("Pre-compaction memory flush.")) {
+        calls.push({ prompt: params.prompt, extraSystemPrompt: params.extraSystemPrompt });
+        if ((params as { trigger?: string }).trigger === "memory") {
           return { payloads: [], meta: {} };
         }
         return {
@@ -1688,14 +1688,65 @@ describe("runReplyAgent memory flush", () => {
       });
 
       expect(calls).toHaveLength(2);
-      expect(calls[0]?.prompt).toContain("Pre-compaction memory flush.");
-      expect(calls[0]?.prompt).toContain("Current time:");
-      expect(calls[0]?.prompt).toMatch(/memory\/\d{4}-\d{2}-\d{2}\.md/);
+      expect(calls[0]?.prompt).toBe("Perform the pre-compaction memory flush now.");
+      expect(calls[0]?.extraSystemPrompt).toContain("Pre-compaction memory flush.");
+      expect(calls[0]?.extraSystemPrompt).toContain("Current time:");
+      expect(calls[0]?.extraSystemPrompt).toMatch(/memory\/\d{4}-\d{2}-\d{2}\.md/);
       expect(calls[1]?.prompt).toBe("hello");
 
       const stored = JSON.parse(await fs.readFile(storePath, "utf-8"));
       expect(stored[sessionKey].memoryFlushAt).toBeTypeOf("number");
       expect(stored[sessionKey].memoryFlushCompactionCount).toBe(1);
+    });
+  });
+
+  it("counts ephemeral runtime system prompts for flush gating without leaking them into the flush turn", async () => {
+    await withTempStore(async (storePath) => {
+      const sessionKey = "main";
+      const sessionEntry = {
+        sessionId: "session",
+        updatedAt: Date.now(),
+        totalTokens: 75_500,
+        totalTokensFresh: true,
+        compactionCount: 1,
+      };
+
+      await seedSessionStore({ storePath, sessionKey, entry: sessionEntry });
+
+      const calls: Array<{ prompt?: string; extraSystemPrompt?: string }> = [];
+      state.runEmbeddedPiAgentMock.mockImplementation(async (params: EmbeddedRunParams) => {
+        calls.push({ prompt: params.prompt, extraSystemPrompt: params.extraSystemPrompt });
+        if ((params as { trigger?: string }).trigger === "memory") {
+          return { payloads: [], meta: {} };
+        }
+        return {
+          payloads: [{ text: "ok" }],
+          meta: { agentMeta: { usage: { input: 1, output: 1 } } },
+        };
+      });
+
+      const runtimeEventsMarker = "System: [t] Very large runtime event block.";
+      const baseRun = createBaseRun({
+        storePath,
+        sessionEntry,
+        runOverrides: { extraSystemPrompt: "persistent system context" },
+      });
+      baseRun.followupRun.ephemeralSystemPrompt = `${runtimeEventsMarker}\n${"x".repeat(6_000)}`;
+
+      await runReplyAgentWithBase({
+        baseRun,
+        storePath,
+        sessionKey,
+        sessionEntry,
+        commandBody: "hello",
+      });
+
+      expect(calls).toHaveLength(2);
+      expect(calls[0]?.prompt).toBe("Perform the pre-compaction memory flush now.");
+      expect(calls[0]?.extraSystemPrompt).toContain("persistent system context");
+      expect(calls[0]?.extraSystemPrompt).not.toContain(runtimeEventsMarker);
+      expect(calls[1]?.extraSystemPrompt).toContain("persistent system context");
+      expect(calls[1]?.extraSystemPrompt).toContain(runtimeEventsMarker);
     });
   });
 
@@ -1722,10 +1773,10 @@ describe("runReplyAgent memory flush", () => {
 
       await seedSessionStore({ storePath, sessionKey, entry: sessionEntry });
 
-      const calls: Array<{ prompt?: string }> = [];
+      const calls: Array<{ prompt?: string; extraSystemPrompt?: string }> = [];
       state.runEmbeddedPiAgentMock.mockImplementation(async (params: EmbeddedRunParams) => {
-        calls.push({ prompt: params.prompt });
-        if (params.prompt?.includes("Pre-compaction memory flush.")) {
+        calls.push({ prompt: params.prompt, extraSystemPrompt: params.extraSystemPrompt });
+        if ((params as { trigger?: string }).trigger === "memory") {
           return { payloads: [], meta: {} };
         }
         return {
@@ -1749,9 +1800,10 @@ describe("runReplyAgent memory flush", () => {
       });
 
       expect(calls).toHaveLength(2);
-      expect(calls[0]?.prompt).toContain("Pre-compaction memory flush.");
-      expect(calls[0]?.prompt).toContain("Current time:");
-      expect(calls[0]?.prompt).toMatch(/memory\/\d{4}-\d{2}-\d{2}\.md/);
+      expect(calls[0]?.prompt).toBe("Perform the pre-compaction memory flush now.");
+      expect(calls[0]?.extraSystemPrompt).toContain("Pre-compaction memory flush.");
+      expect(calls[0]?.extraSystemPrompt).toContain("Current time:");
+      expect(calls[0]?.extraSystemPrompt).toMatch(/memory\/\d{4}-\d{2}-\d{2}\.md/);
       expect(calls[1]?.prompt).toBe("hello");
 
       const stored = JSON.parse(await fs.readFile(storePath, "utf-8"));
@@ -1778,10 +1830,10 @@ describe("runReplyAgent memory flush", () => {
 
       await seedSessionStore({ storePath, sessionKey, entry: sessionEntry });
 
-      const calls: Array<{ prompt?: string }> = [];
+      const calls: Array<{ prompt?: string; extraSystemPrompt?: string }> = [];
       state.runEmbeddedPiAgentMock.mockImplementation(async (params: EmbeddedRunParams) => {
-        calls.push({ prompt: params.prompt });
-        if (params.prompt?.includes("Pre-compaction memory flush.")) {
+        calls.push({ prompt: params.prompt, extraSystemPrompt: params.extraSystemPrompt });
+        if ((params as { trigger?: string }).trigger === "memory") {
           return { payloads: [], meta: {} };
         }
         return {
@@ -1816,7 +1868,8 @@ describe("runReplyAgent memory flush", () => {
       });
 
       expect(calls).toHaveLength(2);
-      expect(calls[0]?.prompt).toContain("Pre-compaction memory flush.");
+      expect(calls[0]?.prompt).toBe("Perform the pre-compaction memory flush now.");
+      expect(calls[0]?.extraSystemPrompt).toContain("Pre-compaction memory flush.");
       expect(calls[1]?.prompt).toBe("hello");
     });
   });
@@ -1915,7 +1968,7 @@ describe("runReplyAgent memory flush", () => {
       await seedSessionStore({ storePath, sessionKey, entry: sessionEntry });
 
       state.runEmbeddedPiAgentMock.mockImplementation(async (params: EmbeddedRunParams) => {
-        if (params.prompt?.includes("Pre-compaction memory flush.")) {
+        if ((params as { trigger?: string }).trigger === "memory") {
           params.onAgentEvent?.({
             stream: "compaction",
             data: { phase: "end", willRetry: false },

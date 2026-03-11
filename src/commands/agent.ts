@@ -72,6 +72,7 @@ import { buildOutboundSessionContext } from "../infra/outbound/session-context.j
 import { getRemoteSkillEligibility } from "../infra/skills-remote.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
+import { buildEphemeralPromptBlock } from "../sessions/ephemeral-context.js";
 import { applyVerboseOverride } from "../sessions/level-overrides.js";
 import { applyModelOverrideToSessionEntry } from "../sessions/model-overrides.js";
 import { resolveSendPolicy } from "../sessions/send-policy.js";
@@ -134,18 +135,68 @@ function resolveFallbackRetryPrompt(params: { body: string; isFallbackRetry: boo
   return "Continue where you left off. The previous model attempt failed or timed out.";
 }
 
-function prependInternalEventContext(
-  body: string,
+function appendSystemPromptSection(
+  base: string | undefined,
+  addition: string | undefined,
+): string | undefined {
+  const trimmedAddition = addition?.trim();
+  if (!trimmedAddition) {
+    return base;
+  }
+  const trimmedBase = base?.trim();
+  if (!trimmedBase) {
+    return trimmedAddition;
+  }
+  if (trimmedBase.includes(trimmedAddition)) {
+    return trimmedBase;
+  }
+  return `${trimmedBase}\n\n${trimmedAddition}`;
+}
+
+function prependBodySection(body: string, addition: string | undefined): string {
+  const trimmedAddition = addition?.trim();
+  if (!trimmedAddition) {
+    return body;
+  }
+  if (body.includes(trimmedAddition)) {
+    return body;
+  }
+  return [trimmedAddition, body].filter(Boolean).join("\n\n");
+}
+
+function buildInternalEventContextText(
   events: AgentCommandOpts["internalEvents"],
-): string {
-  if (body.includes("OpenClaw runtime context (internal):")) {
-    return body;
-  }
-  const renderedEvents = formatAgentInternalEventsForPrompt(events);
+): string | undefined {
+  return formatAgentInternalEventsForPrompt(events) || undefined;
+}
+
+function buildInternalEventSystemPrompt(
+  events: AgentCommandOpts["internalEvents"],
+): string | undefined {
+  const renderedEvents = buildInternalEventContextText(events);
   if (!renderedEvents) {
-    return body;
+    return undefined;
   }
-  return [renderedEvents, body].filter(Boolean).join("\n\n");
+  return buildEphemeralPromptBlock({
+    heading: "Ephemeral runtime context for this turn only.",
+    description: "This context is runtime-generated, not user-authored conversation history.",
+    body: renderedEvents,
+  });
+}
+
+function buildInlineInternalEventPrompt(
+  events: AgentCommandOpts["internalEvents"],
+): string | undefined {
+  return buildInternalEventSystemPrompt(events);
+}
+
+function shouldUseAcpSteerMode(
+  opts: Pick<AgentCommandOpts, "internalEvents" | "inputProvenance">,
+): boolean {
+  if ((opts.internalEvents?.length ?? 0) > 0) {
+    return true;
+  }
+  return opts.inputProvenance?.persistence === "ephemeral";
 }
 
 function runAgentAttempt(params: {
@@ -341,7 +392,36 @@ async function agentCommandInternal(
   if (!message) {
     throw new Error("Message (--message) is required");
   }
-  const body = prependInternalEventContext(message, opts.internalEvents);
+  const body = message;
+  const internalEventContext = buildInternalEventContextText(opts.internalEvents);
+  const bodyAlreadyContainsInternalContext =
+    Boolean(internalEventContext) &&
+    (body.includes("OpenClaw runtime context (internal):") ||
+      body.includes(internalEventContext as string));
+  const extraSystemPrompt = appendSystemPromptSection(
+    opts.extraSystemPrompt,
+    bodyAlreadyContainsInternalContext
+      ? undefined
+      : buildInternalEventSystemPrompt(opts.internalEvents),
+  );
+  const effectiveOpts =
+    extraSystemPrompt === opts.extraSystemPrompt ? opts : { ...opts, extraSystemPrompt };
+  const acpBody = bodyAlreadyContainsInternalContext
+    ? body
+    : prependBodySection(body, buildInlineInternalEventPrompt(effectiveOpts.internalEvents));
+  if (internalEventContext) {
+    const runtimeEventMode = bodyAlreadyContainsInternalContext
+      ? "body-existing"
+      : extraSystemPrompt === opts.extraSystemPrompt
+        ? "body-inline"
+        : "extra-system-prompt";
+    log.debug(
+      `[agent-runtime-events] mode=${runtimeEventMode} ` +
+        `target=${opts.sessionKey ?? opts.sessionId ?? opts.to ?? opts.agentId ?? "unknown"} ` +
+        `eventChars=${internalEventContext.length} bodyChars=${body.length} ` +
+        `events=${opts.internalEvents?.length ?? 0}`,
+    );
+  }
   if (!opts.to && !opts.sessionId && !opts.sessionKey && !opts.agentId) {
     throw new Error("Pass --to <E.164>, --session-id, or --agent to choose a session");
   }
@@ -507,11 +587,18 @@ async function agentCommandInternal(
           throw agentPolicyError;
         }
 
+        const acpMode = shouldUseAcpSteerMode(effectiveOpts) ? "steer" : "prompt";
+        if (acpMode === "steer" && internalEventContext) {
+          log.debug(
+            `[agent-runtime-events] routing ACP turn via steer ` +
+              `target=${sessionKey} events=${effectiveOpts.internalEvents?.length ?? 0}`,
+          );
+        }
         await acpManager.runTurn({
           cfg,
           sessionKey,
-          text: body,
-          mode: "prompt",
+          text: acpBody,
+          mode: acpMode,
           requestId: runId,
           signal: opts.abortSignal,
           onEvent: (event) => {
@@ -858,7 +945,7 @@ async function agentCommandInternal(
             resolvedThinkLevel,
             timeoutMs,
             runId,
-            opts,
+            opts: effectiveOpts,
             runContext,
             spawnedBy,
             messageChannel,
