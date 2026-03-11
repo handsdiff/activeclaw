@@ -1,7 +1,13 @@
 import { Type } from "@sinclair/typebox";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { MemoryCitationsMode } from "../../config/types.memory.js";
+import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { resolveMemoryBackendConfig } from "../../memory/backend-config.js";
+import {
+  isDegradedMemoryStatus,
+  shortDiagnosticFingerprint,
+  summarizeMemoryStatus,
+} from "../../memory/diagnostics.js";
 import { getMemorySearchManager } from "../../memory/index.js";
 import type { MemorySearchResult } from "../../memory/types.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
@@ -9,6 +15,8 @@ import { resolveSessionAgentId } from "../agent-scope.js";
 import { resolveMemorySearchConfig } from "../memory-search.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readNumberParam, readStringParam } from "./common.js";
+
+const log = createSubsystemLogger("memory-tool");
 
 const MemorySearchSchema = Type.Object({
   query: Type.String(),
@@ -54,6 +62,7 @@ export function createMemorySearchTool(options: {
     parameters: MemorySearchSchema,
     execute: async (_toolCallId, params) => {
       const query = readStringParam(params, "query", { required: true });
+      const queryFingerprint = shortDiagnosticFingerprint(query);
       const maxResults = readNumberParam(params, "maxResults");
       const minScore = readNumberParam(params, "minScore");
       const { manager, error } = await getMemorySearchManager({
@@ -61,6 +70,12 @@ export function createMemorySearchTool(options: {
         agentId,
       });
       if (!manager) {
+        log.warn("memory_search tool unavailable", {
+          agentId,
+          sessionKey: options.agentSessionKey,
+          queryFingerprint,
+          error,
+        });
         return jsonResult(buildMemorySearchUnavailableResult(error));
       }
       try {
@@ -82,6 +97,26 @@ export function createMemorySearchTool(options: {
             ? clampResultsByInjectedChars(decorated, resolved.qmd?.limits.maxInjectedChars)
             : decorated;
         const searchMode = (status.custom as { searchMode?: string } | undefined)?.searchMode;
+        const logPayload = {
+          agentId,
+          sessionKey: options.agentSessionKey,
+          queryFingerprint,
+          queryLength: query.length,
+          requestedMaxResults: maxResults,
+          requestedMinScore: minScore,
+          resultCount: results.length,
+          rawResultCount: rawResults.length,
+          citations: citationsMode,
+          mode: searchMode,
+          ...summarizeMemoryStatus(status),
+        };
+        if (isDegradedMemoryStatus(status)) {
+          log.warn("memory_search tool completed with degraded backend", logPayload);
+        } else if (results.length === 0) {
+          log.info("memory_search tool returned 0 results", logPayload);
+        } else {
+          log.debug("memory_search tool completed", logPayload);
+        }
         return jsonResult({
           results,
           provider: status.provider,
@@ -92,6 +127,15 @@ export function createMemorySearchTool(options: {
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        log.warn("memory_search tool failed", {
+          agentId,
+          sessionKey: options.agentSessionKey,
+          queryFingerprint,
+          queryLength: query.length,
+          requestedMaxResults: maxResults,
+          requestedMinScore: minScore,
+          error: message,
+        });
         return jsonResult(buildMemorySearchUnavailableResult(message));
       }
     },

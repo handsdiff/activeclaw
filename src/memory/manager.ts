@@ -9,6 +9,8 @@ import type { OpenClawConfig } from "../config/config.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
 import { resolveAgentHistoryConfig } from "../history/config.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { resolveUserPath } from "../utils.js";
+import { shortDiagnosticFingerprint } from "./diagnostics.js";
 import {
   createEmbeddingProvider,
   type EmbeddingProvider,
@@ -51,10 +53,19 @@ const EMBEDDING_CACHE_TABLE = "embedding_cache";
 const BATCH_FAILURE_LIMIT = 2;
 
 const log = createSubsystemLogger("memory");
+let memoryManagerInstanceSequence = 0;
+
+function summarizePathListForLog(paths: string[], max = 8): string[] {
+  if (paths.length <= max) {
+    return paths;
+  }
+  return [...paths.slice(0, max), `... (+${paths.length - max} more)`];
+}
 
 const INDEX_CACHE = new Map<string, MemoryIndexManager>();
 const INDEX_CACHE_PENDING = new Map<string, Promise<MemoryIndexManager>>();
 let indexCacheGeneration = 0;
+const ACTIVE_DB_PATHS = new Map<string, string>(); // dbPath -> cacheKey
 
 class MemoryManagerCacheInvalidatedError extends Error {
   constructor() {
@@ -66,14 +77,18 @@ async function awaitFreshMemoryManagerAfterInvalidation(
   key: string,
   stalePromise?: Promise<MemoryIndexManager>,
 ): Promise<MemoryIndexManager> {
+  const keyFingerprint = shortDiagnosticFingerprint(key);
   const refreshed = INDEX_CACHE.get(key);
   if (refreshed) {
+    log.debug("memory manager: invalidation recovery found refreshed", { keyFingerprint });
     return refreshed;
   }
   const pending = INDEX_CACHE_PENDING.get(key);
   if (pending && pending !== stalePromise) {
+    log.debug("memory manager: invalidation recovery awaiting new pending", { keyFingerprint });
     return await pending;
   }
+  log.debug("memory manager: invalidation recovery failed", { keyFingerprint });
   throw new MemoryManagerCacheInvalidatedError();
 }
 
@@ -84,16 +99,30 @@ async function closeDiscardedMemoryManager(
 ): Promise<void> {
   try {
     await manager.close();
+    log.debug("memory manager: discarded manager closed", {
+      keyFingerprint: shortDiagnosticFingerprint(key),
+      context,
+    });
   } catch (err) {
-    log.warn(`memory manager close failed during ${context} for ${key}: ${String(err)}`);
+    log.warn(`memory manager close failed during ${context}`, {
+      keyFingerprint: shortDiagnosticFingerprint(key),
+      err: String(err),
+    });
   }
 }
 
 export async function evictAllMemoryIndexManagers(): Promise<void> {
   indexCacheGeneration += 1;
+  const pendingManagers = INDEX_CACHE_PENDING.size;
   INDEX_CACHE_PENDING.clear();
   const managers = [...INDEX_CACHE.values()];
+  log.info("memory manager cache eviction", {
+    generation: indexCacheGeneration,
+    managers: managers.length,
+    pendingManagers,
+  });
   INDEX_CACHE.clear();
+  ACTIVE_DB_PATHS.clear();
   const results = await Promise.allSettled(managers.map(async (manager) => await manager.close()));
   for (const result of results) {
     if (result.status === "rejected") {
@@ -122,6 +151,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
   private readonly cacheKey: string;
   protected readonly cfg: OpenClawConfig;
   protected readonly agentId: string;
+  protected readonly managerInstanceId: string;
   protected readonly workspaceDir: string;
   protected readonly settings: ResolvedMemorySearchConfig;
   protected provider: EmbeddingProvider | null;
@@ -208,15 +238,41 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     }
     const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
     const key = `${agentId}:${workspaceDir}:${JSON.stringify(settings)}`;
+    const cacheKeyFingerprint = shortDiagnosticFingerprint(key);
+    const settingsFingerprint = shortDiagnosticFingerprint(JSON.stringify(settings));
     const existing = INDEX_CACHE.get(key);
     if (existing) {
+      log.debug("memory manager cache hit", {
+        agentId,
+        managerId: existing.managerInstanceId,
+        purpose: params.purpose ?? "default",
+        workspaceDir,
+        dbPath: settings.store.path,
+        sources: settings.sources,
+        cacheKeyFingerprint,
+        settingsFingerprint,
+      });
       return existing;
     }
     const pending = INDEX_CACHE_PENDING.get(key);
     if (pending) {
+      log.debug("memory manager cache wait", {
+        agentId,
+        purpose: params.purpose ?? "default",
+        workspaceDir,
+        dbPath: settings.store.path,
+        sources: settings.sources,
+        cacheKeyFingerprint,
+        settingsFingerprint,
+      });
       return pending;
     }
     const cacheGeneration = indexCacheGeneration;
+    log.debug("memory manager cache miss; creating", {
+      agentId,
+      key: cacheKeyFingerprint,
+      generation: cacheGeneration,
+    });
     let createPromise!: Promise<MemoryIndexManager>;
     createPromise = (async (): Promise<MemoryIndexManager> => {
       const providerResult = await createEmbeddingProvider({
@@ -229,10 +285,20 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
         local: settings.local,
       });
       if (cacheGeneration !== indexCacheGeneration) {
+        log.debug("memory manager: generation changed during provider creation", {
+          agentId,
+          key: cacheKeyFingerprint,
+          startGeneration: cacheGeneration,
+          currentGeneration: indexCacheGeneration,
+        });
         return await awaitFreshMemoryManagerAfterInvalidation(key, createPromise);
       }
       const refreshed = INDEX_CACHE.get(key);
       if (refreshed) {
+        log.debug("memory manager: dedup; another creator won", {
+          agentId,
+          key: cacheKeyFingerprint,
+        });
         return refreshed;
       }
       const manager = new MemoryIndexManager({
@@ -244,11 +310,42 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
         providerResult,
         purpose: params.purpose,
       });
+      log.info("memory manager created", {
+        agentId,
+        managerId: manager.managerInstanceId,
+        purpose: params.purpose ?? "default",
+        workspaceDir,
+        dbPath: settings.store.path,
+        sources: settings.sources,
+        cacheKeyFingerprint,
+        settingsFingerprint,
+        extraPaths: summarizePathListForLog(settings.extraPaths),
+        extraPathsCount: settings.extraPaths.length,
+        excludePaths: summarizePathListForLog(settings.excludePaths),
+        excludePathsCount: settings.excludePaths.length,
+        requestedProvider: providerResult.requestedProvider,
+        provider: providerResult.provider?.id ?? "none",
+        model: providerResult.provider?.model,
+        providerUnavailableReason: providerResult.providerUnavailableReason,
+        fallback: providerResult.fallbackReason
+          ? {
+              from: providerResult.fallbackFrom ?? providerResult.requestedProvider,
+              reason: providerResult.fallbackReason,
+            }
+          : undefined,
+      });
       if (cacheGeneration !== indexCacheGeneration) {
+        log.debug("memory manager: generation changed during construction; discarding", {
+          agentId,
+          key: cacheKeyFingerprint,
+          startGeneration: cacheGeneration,
+          currentGeneration: indexCacheGeneration,
+        });
         await closeDiscardedMemoryManager(manager, key, "config reload invalidation");
         return await awaitFreshMemoryManagerAfterInvalidation(key, createPromise);
       }
       INDEX_CACHE.set(key, manager);
+      log.debug("memory manager: registered in cache", { agentId, key: cacheKeyFingerprint });
       return manager;
     })();
     INDEX_CACHE_PENDING.set(key, createPromise);
@@ -274,6 +371,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     this.cacheKey = params.cacheKey;
     this.cfg = params.cfg;
     this.agentId = params.agentId;
+    this.managerInstanceId = `mm-${++memoryManagerInstanceSequence}`;
     this.workspaceDir = params.workspaceDir;
     this.settings = params.settings;
     this.provider = params.providerResult.provider;
@@ -316,6 +414,63 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     this.dirty = this.sources.has("memory") && (statusOnly ? !meta : true);
     this.historyDirty = this.sources.has("history") && (statusOnly ? !meta : true);
     this.batch = this.resolveBatchConfig();
+    const dbPath = resolveUserPath(this.settings.store.path);
+    const existingKey = ACTIVE_DB_PATHS.get(dbPath);
+    if (existingKey && existingKey !== this.cacheKey) {
+      log.warn("memory manager: store path collision; different configs share same sqlite", {
+        dbPath,
+        thisCacheKeyFingerprint: shortDiagnosticFingerprint(this.cacheKey),
+        existingCacheKeyFingerprint: shortDiagnosticFingerprint(existingKey),
+        agentId: this.agentId,
+      });
+    }
+    ACTIVE_DB_PATHS.set(dbPath, this.cacheKey);
+    log.debug(
+      "memory manager initialized",
+      this.buildLogContext({
+        statusOnly,
+        requestedProvider: this.requestedProvider,
+        provider: this.provider?.id ?? "none",
+        model: this.provider?.model,
+        providerUnavailableReason: this.providerUnavailableReason,
+        fallback: this.fallbackReason
+          ? { from: this.fallbackFrom ?? this.requestedProvider, reason: this.fallbackReason }
+          : undefined,
+        meta: this.summarizeMetaForLog(meta),
+        dirty: this.dirty,
+        historyDirty: this.historyDirty,
+        sessionsDirty: this.sessionsDirty,
+      }),
+    );
+  }
+
+  private buildLogContext(extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      agentId: this.agentId,
+      managerId: this.managerInstanceId,
+      workspaceDir: this.workspaceDir,
+      dbPath: this.settings.store.path,
+      sources: Array.from(this.sources),
+      cacheKeyFingerprint: shortDiagnosticFingerprint(this.cacheKey),
+      settingsFingerprint: shortDiagnosticFingerprint(JSON.stringify(this.settings)),
+      providerKeyFingerprint: shortDiagnosticFingerprint(this.providerKey),
+      ...extra,
+    };
+  }
+
+  private summarizeMetaForLog(meta = this.readMeta()) {
+    if (!meta) {
+      return null;
+    }
+    return {
+      provider: meta.provider,
+      model: meta.model,
+      providerKeyFingerprint: shortDiagnosticFingerprint(meta.providerKey),
+      sources: Array.isArray(meta.sources) ? meta.sources : undefined,
+      chunkTokens: meta.chunkTokens,
+      chunkOverlap: meta.chunkOverlap,
+      vectorDims: meta.vectorDims,
+    };
   }
 
   private getCurrentSearchRuntime(): SearchRuntimeState {
@@ -431,17 +586,57 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       snapshot: true,
     };
     this.reindexPromoting = false;
+    log.info(
+      "memory safe reindex: build start",
+      this.buildLogContext({
+        snapshotProvider: params.originalProvider?.id ?? "none",
+        snapshotModel: params.originalProvider?.model,
+        providerUnavailableReason: params.originalProviderUnavailableReason,
+        currentMeta: this.summarizeMetaForLog(),
+        dirty: {
+          memory: this.dirty,
+          history: this.historyDirty,
+          sessions: this.sessionsDirty,
+        },
+      }),
+    );
   }
 
   protected async onSafeReindexPromoteStart(): Promise<void> {
+    log.info(
+      "memory safe reindex: promote start",
+      this.buildLogContext({
+        nextMeta: this.summarizeMetaForLog(),
+        activeSearchReaders: this.activeSearchReaders,
+      }),
+    );
     this.reindexPromoting = true;
     this.searchSnapshot = null;
     await this.waitForActiveSearchReadersToDrain();
+    log.debug(
+      "memory safe reindex: readers drained",
+      this.buildLogContext({
+        activeSearchReaders: this.activeSearchReaders,
+      }),
+    );
   }
 
   protected onSafeReindexFinished(): void {
     this.reindexPromoting = false;
     this.searchSnapshot = null;
+    const status = this.status();
+    log.info(
+      "memory safe reindex: finished",
+      this.buildLogContext({
+        provider: this.provider?.id ?? "none",
+        model: this.provider?.model,
+        meta: this.summarizeMetaForLog(),
+        files: status.files,
+        chunks: status.chunks,
+        sourceCounts: status.sourceCounts,
+        searchMode: (status.custom as { searchMode?: string } | undefined)?.searchMode,
+      }),
+    );
   }
 
   async warmSession(sessionKey?: string): Promise<void> {
@@ -751,7 +946,10 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       const reason = this.extractErrorReason(err);
       this.readonlyRecoveryAttempts += 1;
       this.readonlyRecoveryLastError = reason;
-      log.warn(`memory sync readonly handle detected; reopening sqlite connection`, { reason });
+      log.warn(
+        `memory sync readonly handle detected; reopening sqlite connection`,
+        this.buildLogContext({ reason }),
+      );
       try {
         this.db.close();
       } catch {}
@@ -1105,7 +1303,15 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     // old instance is still draining. Only evict the cache entry if it still
     // points at this instance.
     if (INDEX_CACHE.get(this.cacheKey) === this) {
+      log.debug("memory manager: self-evicting from cache", {
+        cacheKeyFingerprint: shortDiagnosticFingerprint(this.cacheKey),
+        agentId: this.agentId,
+      });
       INDEX_CACHE.delete(this.cacheKey);
+    }
+    const closedDbPath = resolveUserPath(this.settings.store.path);
+    if (ACTIVE_DB_PATHS.get(closedDbPath) === this.cacheKey) {
+      ACTIVE_DB_PATHS.delete(closedDbPath);
     }
     if (cleanupErrors.length > 0) {
       throw new AggregateError(
@@ -1113,5 +1319,6 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
         `memory manager close failed for ${this.agentId}`,
       );
     }
+    log.debug("memory manager closed", this.buildLogContext());
   }
 }

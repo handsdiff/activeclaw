@@ -2,6 +2,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { ResolvedQmdConfig } from "./backend-config.js";
 import { resolveMemoryBackendConfig } from "./backend-config.js";
+import { shortDiagnosticFingerprint } from "./diagnostics.js";
 import type {
   MemoryEmbeddingProbeResult,
   MemorySearchManager,
@@ -29,12 +30,19 @@ async function awaitFreshQmdManagerAfterInvalidation(
   cacheKey: string,
   stalePromise?: Promise<MemorySearchManager | null>,
 ): Promise<MemorySearchManager | null> {
+  const cacheKeyFingerprint = shortDiagnosticFingerprint(cacheKey);
   const refreshed = QMD_MANAGER_CACHE.get(cacheKey);
   if (refreshed) {
+    log.debug("memory search: qmd invalidation recovery found refreshed", {
+      cacheKeyFingerprint,
+    });
     return refreshed;
   }
   const pending = QMD_MANAGER_PENDING.get(cacheKey);
   if (pending && pending !== stalePromise) {
+    log.debug("memory search: qmd invalidation recovery awaiting new pending", {
+      cacheKeyFingerprint,
+    });
     return await pending;
   }
   throw new QmdManagerCacheInvalidatedError();
@@ -46,6 +54,7 @@ async function closeDiscardedSearchManager(
 ): Promise<void> {
   try {
     await manager?.close?.();
+    log.debug("memory search: discarded manager closed", { context });
   } catch (err) {
     log.warn(`qmd memory manager close failed during ${context}: ${String(err)}`);
   }
@@ -60,6 +69,10 @@ export async function evictAllMemorySearchManagers(): Promise<void> {
   qmdCacheGeneration += 1;
   QMD_MANAGER_PENDING.clear();
   const cachedManagers = [...QMD_MANAGER_CACHE.values()];
+  log.info("memory search manager cache eviction", {
+    generation: qmdCacheGeneration,
+    qmdManagers: cachedManagers.length,
+  });
   QMD_MANAGER_CACHE.clear();
   const results = await Promise.allSettled(
     cachedManagers.map(async (manager) => await manager.close?.()),
@@ -71,6 +84,7 @@ export async function evictAllMemorySearchManagers(): Promise<void> {
   }
   const { evictAllMemoryIndexManagers } = await loadManagerRuntime();
   await evictAllMemoryIndexManagers();
+  log.debug("memory search: eviction complete", { generation: qmdCacheGeneration });
 }
 
 export async function getMemorySearchManager(params: {
@@ -85,12 +99,21 @@ export async function getMemorySearchManager(params: {
     let createPromise: Promise<MemorySearchManager | null> | null = null;
     if (!statusOnly) {
       cacheKey = buildQmdCacheKey(params.agentId, resolved.qmd);
+      const cacheKeyFingerprint = shortDiagnosticFingerprint(cacheKey);
       const cached = QMD_MANAGER_CACHE.get(cacheKey);
       if (cached) {
+        log.debug("memory search: qmd cache hit", {
+          agentId: params.agentId,
+          cacheKeyFingerprint,
+        });
         return { manager: cached };
       }
       const pending = QMD_MANAGER_PENDING.get(cacheKey);
       if (pending) {
+        log.debug("memory search: qmd cache wait", {
+          agentId: params.agentId,
+          cacheKeyFingerprint,
+        });
         try {
           return { manager: await pending };
         } catch (err) {
@@ -103,6 +126,13 @@ export async function getMemorySearchManager(params: {
     }
     try {
       const cacheGeneration = qmdCacheGeneration;
+      if (!statusOnly && cacheKey) {
+        log.debug("memory search: qmd cache miss; creating", {
+          agentId: params.agentId,
+          cacheKeyFingerprint: shortDiagnosticFingerprint(cacheKey),
+          generation: cacheGeneration,
+        });
+      }
       createPromise = (async (): Promise<MemorySearchManager | null> => {
         const { QmdMemoryManager } = await import("./qmd-manager.js");
         const primary = await QmdMemoryManager.create({
@@ -118,6 +148,10 @@ export async function getMemorySearchManager(params: {
           return primary;
         }
         if (cacheGeneration !== qmdCacheGeneration) {
+          log.debug("memory search: qmd generation changed during creation; discarding", {
+            agentId: params.agentId,
+            cacheKeyFingerprint: shortDiagnosticFingerprint(cacheKey),
+          });
           await closeDiscardedSearchManager(primary, "config reload invalidation");
           return await awaitFreshQmdManagerAfterInvalidation(cacheKey, createPromise ?? undefined);
         }
@@ -144,10 +178,18 @@ export async function getMemorySearchManager(params: {
           },
         );
         if (cacheGeneration !== qmdCacheGeneration) {
+          log.debug("memory search: qmd generation changed after wrapping; discarding", {
+            agentId: params.agentId,
+            cacheKeyFingerprint: shortDiagnosticFingerprint(cacheKey),
+          });
           await closeDiscardedSearchManager(wrapper, "config reload invalidation");
           return await awaitFreshQmdManagerAfterInvalidation(cacheKey, createPromise ?? undefined);
         }
         QMD_MANAGER_CACHE.set(cacheKey, wrapper);
+        log.debug("memory search: qmd registered", {
+          agentId: params.agentId,
+          cacheKeyFingerprint: shortDiagnosticFingerprint(cacheKey),
+        });
         return wrapper;
       })();
       if (!statusOnly && cacheKey) {
@@ -174,6 +216,7 @@ export async function getMemorySearchManager(params: {
   }
 
   try {
+    log.debug("memory search: using builtin index manager", { agentId: params.agentId });
     const { MemoryIndexManager } = await loadManagerRuntime();
     const manager = await MemoryIndexManager.get(params);
     return { manager };

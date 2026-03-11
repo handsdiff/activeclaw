@@ -71,7 +71,11 @@ export function createGatewayReloadHandlers(params: {
     }
 
     if (plan.restartMemory) {
+      const reasons =
+        plan.changedPaths.length > 0 ? plan.changedPaths.join(", ") : plan.hotReasons.join(", ");
+      params.logReload.info(`memory config reload: evicting cached managers (${reasons})`);
       await evictAllMemorySearchManagers();
+      params.logReload.info("memory config reload: cached managers evicted");
     }
 
     resetDirectoryCache();

@@ -13,6 +13,12 @@ import { sweepAgentHistoryRetention } from "../history/maintenance.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { resolveUserPath } from "../utils.js";
+import {
+  describeMemoryReindexReasons,
+  shortDiagnosticFingerprint,
+  summarizeMemoryIndexMeta,
+  summarizeMemoryStatus,
+} from "./diagnostics.js";
 import { DEFAULT_GEMINI_EMBEDDING_MODEL } from "./embeddings-gemini.js";
 import { DEFAULT_MISTRAL_EMBEDDING_MODEL } from "./embeddings-mistral.js";
 import { DEFAULT_OLLAMA_EMBEDDING_MODEL } from "./embeddings-ollama.js";
@@ -50,7 +56,7 @@ import {
 } from "./session-files.js";
 import { loadSqliteVecExtension } from "./sqlite-vec.js";
 import { requireNodeSqlite } from "./sqlite.js";
-import type { MemorySource, MemorySyncProgressUpdate } from "./types.js";
+import type { MemoryProviderStatus, MemorySource, MemorySyncProgressUpdate } from "./types.js";
 
 type MemoryIndexMeta = {
   model: string;
@@ -95,9 +101,18 @@ function shouldIgnoreMemoryWatchPath(watchPath: string): boolean {
   return parts.some((segment) => IGNORED_MEMORY_WATCH_DIR_NAMES.has(segment));
 }
 
+function summarizePathListForLog(paths: Iterable<string>, max = 8): string[] {
+  const entries = Array.from(paths);
+  if (entries.length <= max) {
+    return entries;
+  }
+  return [...entries.slice(0, max), `... (+${entries.length - max} more)`];
+}
+
 export abstract class MemoryManagerSyncOps {
   protected abstract readonly cfg: OpenClawConfig;
   protected abstract readonly agentId: string;
+  protected abstract readonly managerInstanceId: string;
   protected abstract readonly workspaceDir: string;
   protected abstract readonly settings: ResolvedMemorySearchConfig;
   protected provider: EmbeddingProvider | null = null;
@@ -159,6 +174,7 @@ export abstract class MemoryManagerSyncOps {
     force?: boolean;
     progress?: (update: MemorySyncProgressUpdate) => void;
   }): Promise<void>;
+  protected abstract status(): MemoryProviderStatus;
   protected abstract withTimeout<T>(
     promise: Promise<T>,
     timeoutMs: number,
@@ -181,6 +197,45 @@ export abstract class MemoryManagerSyncOps {
   }): void {}
   protected onSafeReindexPromoteStart(): Promise<void> | void {}
   protected onSafeReindexFinished(): void {}
+
+  protected buildMemoryLogMeta(extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      agentId: this.agentId,
+      managerId: this.managerInstanceId,
+      workspaceDir: this.workspaceDir,
+      dbPath: this.settings.store.path,
+      sources: Array.from(this.sources),
+      ...extra,
+    };
+  }
+
+  protected buildMemoryDiagnostics(extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return this.buildMemoryLogMeta({
+      requestedProvider: this.settings.provider,
+      provider: this.provider?.id ?? "none",
+      model: this.provider?.model,
+      settingsFingerprint: shortDiagnosticFingerprint(JSON.stringify(this.settings)),
+      providerKeyFingerprint: this.providerKey
+        ? shortDiagnosticFingerprint(this.providerKey)
+        : undefined,
+      providerUnavailableReason: this.providerUnavailableReason,
+      extraPaths: summarizePathListForLog(this.settings.extraPaths),
+      extraPathsCount: this.settings.extraPaths.length,
+      excludePaths: summarizePathListForLog(this.settings.excludePaths),
+      excludePathsCount: this.settings.excludePaths.length,
+      hasRemoteBaseUrl: Boolean(this.settings.remote?.baseUrl),
+      hasRemoteApiKey: Boolean(this.settings.remote?.apiKey),
+      hasRemoteHeaders: Boolean(
+        this.settings.remote?.headers && Object.keys(this.settings.remote.headers).length > 0,
+      ),
+      watchEnabled: this.settings.sync.watch,
+      watchDebounceMs: this.settings.sync.watchDebounceMs,
+      intervalMinutes: this.settings.sync.intervalMinutes,
+      sessionDeltaBytes: this.settings.sync.sessions.deltaBytes,
+      sessionDeltaMessages: this.settings.sync.sessions.deltaMessages,
+      ...extra,
+    });
+  }
 
   protected deleteIndexedPathRows(
     pathValue: string,
@@ -479,6 +534,14 @@ export abstract class MemoryManagerSyncOps {
         pollInterval: 100,
       },
     });
+    log.debug(
+      "memory watcher started",
+      this.buildMemoryLogMeta({
+        watchPaths: summarizePathListForLog(watchPaths),
+        watchRoots: summarizePathListForLog(watchRoots),
+        excludePaths: summarizePathListForLog(excludedPaths),
+      }),
+    );
     const markDirty = () => {
       this.dirty = true;
       this.scheduleWatchSync();
@@ -486,6 +549,9 @@ export abstract class MemoryManagerSyncOps {
     this.watcher.on("add", markDirty);
     this.watcher.on("change", markDirty);
     this.watcher.on("unlink", markDirty);
+    this.watcher.on("error", (err) => {
+      log.warn("memory watcher error", this.buildMemoryLogMeta({ err: String(err) }));
+    });
   }
 
   protected ensureHistoryWatcher() {
@@ -523,6 +589,12 @@ export abstract class MemoryManagerSyncOps {
         pollInterval: 100,
       },
     });
+    log.debug(
+      "history watcher started",
+      this.buildMemoryLogMeta({
+        historyPath: history.path,
+      }),
+    );
     const markDirty = () => {
       this.historyDirty = true;
       this.scheduleWatchSync();
@@ -530,6 +602,9 @@ export abstract class MemoryManagerSyncOps {
     this.historyWatcher.on("add", markDirty);
     this.historyWatcher.on("change", markDirty);
     this.historyWatcher.on("unlink", markDirty);
+    this.historyWatcher.on("error", (err) => {
+      log.warn("history watcher error", this.buildMemoryLogMeta({ err: String(err) }));
+    });
   }
 
   protected ensureSessionListener() {
@@ -546,6 +621,14 @@ export abstract class MemoryManagerSyncOps {
       }
       this.scheduleSessionDirty(sessionFile);
     });
+    log.debug(
+      "memory session listener started",
+      this.buildMemoryLogMeta({
+        sessionsPath: resolveSessionTranscriptsDirForAgent(this.agentId),
+        sessionDeltaBytes: this.settings.sync.sessions.deltaBytes,
+        sessionDeltaMessages: this.settings.sync.sessions.deltaMessages,
+      }),
+    );
   }
 
   private scheduleSessionDirty(sessionFile: string) {
@@ -725,6 +808,10 @@ export abstract class MemoryManagerSyncOps {
         log.warn(`memory sync failed (interval): ${String(err)}`);
       });
     }, ms);
+    log.debug(
+      "memory interval sync started",
+      this.buildMemoryLogMeta({ intervalMinutes: minutes, intervalMs: ms }),
+    );
   }
 
   protected ensureHistoryMaintenance() {
@@ -740,6 +827,14 @@ export abstract class MemoryManagerSyncOps {
         log.warn(`history retention sweep failed for ${this.agentId}`, { err: String(err) });
       });
     }, HISTORY_RETENTION_SWEEP_INTERVAL_MS);
+    log.debug(
+      "history retention maintenance started",
+      this.buildMemoryLogMeta({
+        historyPath: history.path,
+        retentionDays: history.retention.days,
+        sweepIntervalMs: HISTORY_RETENTION_SWEEP_INTERVAL_MS,
+      }),
+    );
   }
 
   protected async runHistoryRetentionSweep(): Promise<void> {
@@ -1065,16 +1160,30 @@ export abstract class MemoryManagerSyncOps {
     const vectorReady = await this.ensureVectorReady();
     const meta = this.readMeta();
     const configuredSources = this.resolveConfiguredSourcesForMeta();
-    const needsFullReindex =
-      params?.force ||
-      !meta ||
-      (this.provider && meta.model !== this.provider.model) ||
-      (this.provider && meta.provider !== this.provider.id) ||
-      meta.providerKey !== this.providerKey ||
-      this.metaSourcesDiffer(meta, configuredSources) ||
-      meta.chunkTokens !== this.settings.chunking.tokens ||
-      meta.chunkOverlap !== this.settings.chunking.overlap ||
-      (vectorReady && !meta?.vectorDims);
+    const reindexReasons = describeMemoryReindexReasons({
+      force: params?.force,
+      meta,
+      providerId: this.provider?.id ?? null,
+      providerModel: this.provider?.model ?? null,
+      providerKey: this.providerKey,
+      configuredSources,
+      settings: this.settings,
+      vectorReady,
+    });
+    const needsFullReindex = reindexReasons.length > 0;
+    if (needsFullReindex) {
+      log.info(
+        "memory sync: full reindex required",
+        this.buildMemoryLogMeta({
+          trigger: params?.reason ?? "unspecified",
+          force: Boolean(params?.force),
+          vectorReady,
+          currentMeta: summarizeMemoryIndexMeta(meta),
+          configuredSources,
+          reindexReasons,
+        }),
+      );
+    }
     try {
       if (needsFullReindex) {
         if (
@@ -1085,12 +1194,14 @@ export abstract class MemoryManagerSyncOps {
             reason: params?.reason,
             force: params?.force,
             progress: progress ?? undefined,
+            reindexReasons,
           });
         } else {
           await this.runSafeReindex({
             reason: params?.reason,
             force: params?.force,
             progress: progress ?? undefined,
+            reindexReasons,
           });
         }
         return;
@@ -1130,6 +1241,7 @@ export abstract class MemoryManagerSyncOps {
           reason: params?.reason ?? "fallback",
           force: true,
           progress: progress ?? undefined,
+          reindexReasons: [`fallback:${reason}`],
           snapshotProvider: null,
           snapshotProviderUnavailableReason: `keyword-only snapshot during fallback reindex: ${reason}`,
         });
@@ -1216,7 +1328,12 @@ export abstract class MemoryManagerSyncOps {
     this.ollama = fallbackResult.ollama;
     this.providerKey = this.computeProviderKey();
     this.batch = this.resolveBatchConfig();
-    log.warn(`memory embeddings: switched to fallback provider (${fallback})`, { reason });
+    log.warn(`memory embeddings: switched to fallback provider (${fallback})`, {
+      ...this.buildMemoryDiagnostics(),
+      from: fallbackFrom,
+      to: fallback,
+      reason,
+    });
     return true;
   }
 
@@ -1224,6 +1341,7 @@ export abstract class MemoryManagerSyncOps {
     reason?: string;
     force?: boolean;
     progress?: MemorySyncProgressState;
+    reindexReasons?: string[];
     snapshotProvider?: EmbeddingProvider | null;
     snapshotProviderUnavailableReason?: string;
   }): Promise<void> {
@@ -1257,6 +1375,16 @@ export abstract class MemoryManagerSyncOps {
     };
 
     const hasSnapshotProvider = Object.prototype.hasOwnProperty.call(params, "snapshotProvider");
+    log.info("memory sync: starting safe reindex", {
+      ...this.buildMemoryDiagnostics(),
+      trigger: params.reason ?? "unspecified",
+      force: Boolean(params.force),
+      dbPath,
+      tempDbFingerprint: shortDiagnosticFingerprint(tempDbPath),
+      reindexReasons: params.reindexReasons ?? [],
+      snapshotProvider: hasSnapshotProvider ? (params.snapshotProvider?.id ?? "none") : undefined,
+      snapshotProviderUnavailableReason: params.snapshotProviderUnavailableReason,
+    });
     this.onSafeReindexBuildStart({
       originalDb,
       originalProvider: hasSnapshotProvider ? (params.snapshotProvider ?? null) : this.provider,
@@ -1339,6 +1467,13 @@ export abstract class MemoryManagerSyncOps {
       this.vector.loadError = undefined;
       this.ensureSchema();
       this.vector.dims = nextMeta?.vectorDims;
+      log.info("memory sync: safe reindex promoted", {
+        ...this.buildMemoryDiagnostics(),
+        trigger: params.reason ?? "unspecified",
+        reindexReasons: params.reindexReasons ?? [],
+        meta: summarizeMemoryIndexMeta(nextMeta),
+        status: summarizeMemoryStatus(this.status()),
+      });
       this.onSafeReindexFinished();
     } catch (err) {
       try {
@@ -1346,6 +1481,13 @@ export abstract class MemoryManagerSyncOps {
       } catch {}
       await this.removeIndexFiles(tempDbPath);
       restoreOriginalState();
+      log.warn("memory sync: safe reindex failed", {
+        ...this.buildMemoryDiagnostics(),
+        trigger: params.reason ?? "unspecified",
+        reindexReasons: params.reindexReasons ?? [],
+        error: err instanceof Error ? err.message : String(err),
+        tempDbFingerprint: shortDiagnosticFingerprint(tempDbPath),
+      });
       this.onSafeReindexFinished();
       throw err;
     }
@@ -1355,9 +1497,16 @@ export abstract class MemoryManagerSyncOps {
     reason?: string;
     force?: boolean;
     progress?: MemorySyncProgressState;
+    reindexReasons?: string[];
   }): Promise<void> {
     // Perf: for test runs, skip atomic temp-db swapping. The index is isolated
     // under the per-test HOME anyway, and this cuts substantial fs+sqlite churn.
+    log.info("memory sync: starting unsafe reindex", {
+      ...this.buildMemoryDiagnostics(),
+      trigger: params.reason ?? "unspecified",
+      force: Boolean(params.force),
+      reindexReasons: params.reindexReasons ?? [],
+    });
     this.resetIndex();
 
     const shouldSyncMemory = this.sources.has("memory");
@@ -1401,6 +1550,13 @@ export abstract class MemoryManagerSyncOps {
 
     this.writeMeta(nextMeta);
     this.pruneEmbeddingCacheIfNeeded?.();
+    log.info("memory sync: unsafe reindex complete", {
+      ...this.buildMemoryDiagnostics(),
+      trigger: params.reason ?? "unspecified",
+      reindexReasons: params.reindexReasons ?? [],
+      meta: summarizeMemoryIndexMeta(nextMeta),
+      status: summarizeMemoryStatus(this.status()),
+    });
   }
 
   private resetIndex() {
@@ -1428,8 +1584,14 @@ export abstract class MemoryManagerSyncOps {
       const parsed = JSON.parse(row.value) as MemoryIndexMeta;
       this.lastMetaSerialized = row.value;
       return parsed;
-    } catch {
+    } catch (err) {
       this.lastMetaSerialized = null;
+      log.warn("memory sync: index meta unreadable; treating as missing", {
+        ...this.buildMemoryDiagnostics(),
+        error: err instanceof Error ? err.message : String(err),
+        metaFingerprint: shortDiagnosticFingerprint(row.value),
+        metaBytes: row.value.length,
+      });
       return null;
     }
   }
@@ -1445,6 +1607,10 @@ export abstract class MemoryManagerSyncOps {
       )
       .run(META_KEY, value);
     this.lastMetaSerialized = value;
+    log.info("memory sync: wrote index meta", {
+      ...this.buildMemoryDiagnostics(),
+      meta: summarizeMemoryIndexMeta(meta),
+    });
   }
 
   private resolveConfiguredSourcesForMeta(): MemorySource[] {
@@ -1455,29 +1621,5 @@ export abstract class MemoryManagerSyncOps {
       )
       .toSorted();
     return normalized.length > 0 ? normalized : ["memory"];
-  }
-
-  private normalizeMetaSources(meta: MemoryIndexMeta): MemorySource[] {
-    if (!Array.isArray(meta.sources)) {
-      // Backward compatibility for older indexes that did not persist sources.
-      return ["memory"];
-    }
-    const normalized = Array.from(
-      new Set(
-        meta.sources.filter(
-          (source): source is MemorySource =>
-            source === "memory" || source === "sessions" || source === "history",
-        ),
-      ),
-    ).toSorted();
-    return normalized.length > 0 ? normalized : ["memory"];
-  }
-
-  private metaSourcesDiffer(meta: MemoryIndexMeta, configuredSources: MemorySource[]): boolean {
-    const metaSources = this.normalizeMetaSources(meta);
-    if (metaSources.length !== configuredSources.length) {
-      return true;
-    }
-    return metaSources.some((source, index) => source !== configuredSources[index]);
   }
 }

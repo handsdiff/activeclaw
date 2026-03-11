@@ -3,6 +3,7 @@ import path from "node:path";
 import type { OpenClawConfig, MemorySearchConfig } from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
 import type { SecretInput } from "../config/types.secrets.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { clampInt, clampNumber, resolveUserPath } from "../utils.js";
 import { resolveAgentConfig } from "./agent-scope.js";
 
@@ -102,6 +103,70 @@ const DEFAULT_TEMPORAL_DECAY_ENABLED = false;
 const DEFAULT_TEMPORAL_DECAY_HALF_LIFE_DAYS = 30;
 const DEFAULT_CACHE_ENABLED = true;
 const DEFAULT_SOURCES: ReadonlyArray<"memory" | "sessions" | "history"> = ["memory"];
+const log = createSubsystemLogger("memory");
+const RESOLVED_MEMORY_CONFIG_LOG_STATE = new Map<string, string>();
+
+function summarizePathListForLog(paths: string[], max = 8): string[] {
+  if (paths.length <= max) {
+    return paths;
+  }
+  return [...paths.slice(0, max), `... (+${paths.length - max} more)`];
+}
+
+function maybeLogResolvedMemorySearchConfig(params: {
+  agentId: string;
+  defaults: MemorySearchConfig | undefined;
+  overrides: MemorySearchConfig | undefined;
+  resolved: ResolvedMemorySearchConfig | null;
+}): void {
+  const summary = params.resolved
+    ? {
+        agentId: params.agentId,
+        enabled: true,
+        hasDefaults: Boolean(params.defaults),
+        hasOverrides: Boolean(params.overrides),
+        provider: params.resolved.provider,
+        model: params.resolved.model || undefined,
+        fallback: params.resolved.fallback,
+        storePath: params.resolved.store.path,
+        vectorEnabled: params.resolved.store.vector.enabled,
+        sources: params.resolved.sources,
+        sessionMemory: params.resolved.experimental.sessionMemory,
+        extraPaths: summarizePathListForLog(params.resolved.extraPaths),
+        extraPathsCount: params.resolved.extraPaths.length,
+        excludePaths: summarizePathListForLog(params.resolved.excludePaths),
+        excludePathsCount: params.resolved.excludePaths.length,
+        sync: {
+          onSessionStart: params.resolved.sync.onSessionStart,
+          onSearch: params.resolved.sync.onSearch,
+          watch: params.resolved.sync.watch,
+          watchDebounceMs: params.resolved.sync.watchDebounceMs,
+          intervalMinutes: params.resolved.sync.intervalMinutes,
+          sessionDeltaBytes: params.resolved.sync.sessions.deltaBytes,
+          sessionDeltaMessages: params.resolved.sync.sessions.deltaMessages,
+        },
+        query: {
+          maxResults: params.resolved.query.maxResults,
+          minScore: params.resolved.query.minScore,
+          hybridEnabled: params.resolved.query.hybrid.enabled,
+          candidateMultiplier: params.resolved.query.hybrid.candidateMultiplier,
+          temporalDecay: params.resolved.query.hybrid.temporalDecay,
+        },
+        cacheEnabled: params.resolved.cache.enabled,
+      }
+    : {
+        agentId: params.agentId,
+        enabled: false,
+        hasDefaults: Boolean(params.defaults),
+        hasOverrides: Boolean(params.overrides),
+      };
+  const serialized = JSON.stringify(summary);
+  if (RESOLVED_MEMORY_CONFIG_LOG_STATE.get(params.agentId) === serialized) {
+    return;
+  }
+  RESOLVED_MEMORY_CONFIG_LOG_STATE.set(params.agentId, serialized);
+  log.debug("memory config resolved", summary);
+}
 
 function normalizeSources(
   sources: ReadonlyArray<"memory" | "sessions" | "history"> | undefined,
@@ -130,10 +195,13 @@ function resolveStorePath(agentId: string, raw?: string): string {
   const stateDir = resolveStateDir(process.env, os.homedir);
   const fallback = path.join(stateDir, "memory", `${agentId}.sqlite`);
   if (!raw) {
+    log.debug("memory config: store path (default)", { agentId, dbPath: fallback });
     return fallback;
   }
   const withToken = raw.includes("{agentId}") ? raw.replaceAll("{agentId}", agentId) : raw;
-  return resolveUserPath(withToken);
+  const resolved = resolveUserPath(withToken);
+  log.debug("memory config: store path", { agentId, raw, dbPath: resolved });
+  return resolved;
 }
 
 function mergeConfig(
@@ -369,7 +437,9 @@ export function resolveMemorySearchConfig(
   const overrides = resolveAgentConfig(cfg, agentId)?.memorySearch;
   const resolved = mergeConfig(defaults, overrides, agentId);
   if (!resolved.enabled) {
+    maybeLogResolvedMemorySearchConfig({ agentId, defaults, overrides, resolved: null });
     return null;
   }
+  maybeLogResolvedMemorySearchConfig({ agentId, defaults, overrides, resolved });
   return resolved;
 }

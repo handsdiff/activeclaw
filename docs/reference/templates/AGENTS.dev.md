@@ -42,6 +42,13 @@ git commit -m "Add agent workspace"
 
 - HEARTBEAT.md can hold a tiny checklist for heartbeat runs; keep it small.
 
+## Execution defaults
+
+- Prefer inspectable artifacts over private analysis. A sent message, commit, issue, applied fix, or blocker note with the exact failed step is better than an unrecorded thought.
+- If you are blocked, record the attempted unblock and the exact resume point before ending the cycle.
+- Verify specific values before asserting them: commands, flags, paths, field names, versions, URLs, and timestamps.
+- When you say something is fixed, broken, or waiting, include evidence: a file path, commit, command output, or exact error.
+
 ## Customize
 
 - Add your preferred style, rules, and "memory" here.

@@ -57,7 +57,7 @@ async function ensureDevWorkspace(dir: string) {
   const resolvedDir = resolveUserPath(dir);
   await fs.promises.mkdir(resolvedDir, { recursive: true });
 
-  const [agents, soul, tools, identity, user] = await Promise.all([
+  const [agents, soul, tools, identity, user, heartbeat] = await Promise.all([
     loadDevTemplate(
       "AGENTS.dev.md",
       `# AGENTS.md - OpenClaw Dev Workspace\n\nDefault dev workspace for openclaw gateway --dev.\n`,
@@ -78,6 +78,10 @@ async function ensureDevWorkspace(dir: string) {
       "USER.dev.md",
       `# USER.md - User Profile\n\n- Name:\n- Preferred address:\n- Notes:\n`,
     ),
+    loadDevTemplate(
+      "HEARTBEAT.dev.md",
+      "# HEARTBEAT.md\n\n- Follow up on unfinished dev work.\n- Leave behind a commit, fix, or blocker note.\n- Reply HEARTBEAT_OK only when nothing useful remains.\n",
+    ),
   ]);
 
   await writeFileIfMissing(path.join(resolvedDir, "AGENTS.md"), agents);
@@ -85,6 +89,7 @@ async function ensureDevWorkspace(dir: string) {
   await writeFileIfMissing(path.join(resolvedDir, "TOOLS.md"), tools);
   await writeFileIfMissing(path.join(resolvedDir, "IDENTITY.md"), identity);
   await writeFileIfMissing(path.join(resolvedDir, "USER.md"), user);
+  await writeFileIfMissing(path.join(resolvedDir, "HEARTBEAT.md"), heartbeat);
 }
 
 export async function ensureDevGatewayConfig(opts: { reset?: boolean }) {

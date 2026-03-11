@@ -39,3 +39,9 @@ Remove all non-comment lines below to disable heartbeat work cycles.
 - Rotate through these — you don't need to do everything every cycle
 - Track state in `memory/heartbeat-state.json` to avoid repeating yourself
 - Bias toward action over silence
+- Prefer actions that create new information or visible progress over passive review
+- If blocked, advance the dependency or record the exact blocker before ending the cycle
+- Leave one inspectable artifact behind in each active cycle; prefer sent messages, commits, issues, specs, or applied changes
+- If no external artifact is possible, record the attempted unblock and exact resume point before ending the cycle
+- When reporting progress, include concrete evidence when possible
+- `HEARTBEAT_OK` is for genuine no-op cycles, not for avoiding the next useful action

@@ -2,6 +2,7 @@ import path from "node:path";
 import { resolveMemorySearchConfig } from "../../agents/memory-search.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import { shortDiagnosticFingerprint, summarizeMemoryStatus } from "../../memory/diagnostics.js";
 import { getMemorySearchManager } from "../../memory/search-manager.js";
 import type { MemorySearchResult } from "../../memory/types.js";
 
@@ -75,6 +76,7 @@ export async function runPreTurnMemoryRecall(params: {
   }
 
   const startMs = Date.now();
+  const queryFingerprint = shortDiagnosticFingerprint(params.incomingMessage);
   const searchSurfaceLines = buildSearchSurfaceLines(params.cfg, params.agentId);
 
   let managerResult;
@@ -84,7 +86,13 @@ export async function runPreTurnMemoryRecall(params: {
       agentId: params.agentId,
     });
   } catch (err) {
-    log.warn(`memory recall: failed to get manager: ${String(err)}`);
+    log.warn("memory recall: failed to get manager", {
+      agentId: params.agentId,
+      sessionKey: params.sessionKey,
+      incomingLength: params.incomingMessage.length,
+      queryFingerprint,
+      err: String(err),
+    });
     return formatRecallBlock({
       searchSurfaceLines,
       bodyLines: [
@@ -96,6 +104,13 @@ export async function runPreTurnMemoryRecall(params: {
 
   const { manager } = managerResult;
   if (!manager) {
+    log.warn("memory recall: manager unavailable", {
+      agentId: params.agentId,
+      sessionKey: params.sessionKey,
+      incomingLength: params.incomingMessage.length,
+      queryFingerprint,
+      error: managerResult.error ?? "memory manager unavailable",
+    });
     return formatRecallBlock({
       searchSurfaceLines,
       bodyLines: [
@@ -106,17 +121,27 @@ export async function runPreTurnMemoryRecall(params: {
   }
 
   let results: MemorySearchResult[];
+  const extraCandidates = (settings.excludeBootstrapped ? 3 : 0) + (settings.randomSlot ? 2 : 0);
+  const requestCount = settings.maxResults + extraCandidates;
   try {
     // Request extra candidates for filtering headroom (bootstrapped exclusion + random slot)
-    const extraCandidates = (settings.excludeBootstrapped ? 3 : 0) + (settings.randomSlot ? 2 : 0);
-    const requestCount = settings.maxResults + extraCandidates;
     results = await manager.search(params.incomingMessage, {
       maxResults: requestCount,
       minScore: settings.minScore,
       sessionKey: params.sessionKey,
     });
   } catch (err) {
-    log.warn(`memory recall: search failed: ${String(err)}`);
+    const status = manager.status();
+    log.warn("memory recall: search failed", {
+      agentId: params.agentId,
+      sessionKey: params.sessionKey,
+      incomingLength: params.incomingMessage.length,
+      queryFingerprint,
+      requestedMaxResults: requestCount,
+      minScore: settings.minScore,
+      err: String(err),
+      ...summarizeMemoryStatus(status),
+    });
     return formatRecallBlock({
       searchSurfaceLines,
       bodyLines: [
@@ -153,7 +178,17 @@ export async function runPreTurnMemoryRecall(params: {
 
   if (!results.length) {
     const elapsedMs = Date.now() - startMs;
-    log.info(`memory recall: 0 results (${elapsedMs}ms)`);
+    const status = manager.status();
+    log.info("memory recall: 0 results", {
+      agentId: params.agentId,
+      sessionKey: params.sessionKey,
+      elapsedMs,
+      incomingLength: params.incomingMessage.length,
+      queryFingerprint,
+      requestedMaxResults: requestCount,
+      minScore: settings.minScore,
+      ...summarizeMemoryStatus(status),
+    });
     return formatRecallBlock({
       searchSurfaceLines,
       bodyLines: [

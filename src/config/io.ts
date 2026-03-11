@@ -810,6 +810,9 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
       }
       const error = err as { code?: string };
       if (error?.code === "INVALID_CONFIG") {
+        deps.logger.warn(
+          `Invalid config fallback at ${configPath}: returning empty config object for this read`,
+        );
         return {};
       }
       deps.logger.error(`Failed to read config at ${configPath}`, err);
