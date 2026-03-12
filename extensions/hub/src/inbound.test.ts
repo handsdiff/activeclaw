@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+type SendReply = (target: string, text: string) => Promise<void>;
+type SendReplyMock = ReturnType<typeof vi.fn> & SendReply;
+
+function createSendReplyMock(): SendReplyMock {
+  return vi.fn(async () => undefined) as SendReplyMock;
+}
+
 const {
   createNormalizedOutboundDelivererMock,
   createReplyPrefixOptionsMock,
@@ -137,7 +144,7 @@ describe("handleHubInbound", () => {
   function buildParams(overrides?: {
     message?: Record<string, unknown>;
     accountConfig?: Record<string, unknown>;
-    sendReply?: ReturnType<typeof vi.fn>;
+    sendReply?: SendReply;
   }) {
     return {
       message: {
@@ -165,12 +172,12 @@ describe("handleHubInbound", () => {
         error: vi.fn(),
         log: vi.fn(),
       } as any,
-      sendReply: overrides?.sendReply ?? vi.fn().mockResolvedValue(undefined),
+      sendReply: overrides?.sendReply ?? createSendReplyMock(),
     };
   }
 
   it("replies to the plain Hub id while keeping prefixed conversation history keys", async () => {
-    const sendReplyMock = vi.fn().mockResolvedValue(undefined);
+    const sendReplyMock = createSendReplyMock();
 
     await handleHubInbound(buildParams({ sendReply: sendReplyMock }));
 
@@ -184,7 +191,7 @@ describe("handleHubInbound", () => {
   });
 
   it("accepts prefixed config allowFrom entries under allowlist policy", async () => {
-    const sendReplyMock = vi.fn().mockResolvedValue(undefined);
+    const sendReplyMock = createSendReplyMock();
     resolveEffectiveAllowFromListsMock.mockImplementation(({ allowFrom, storeAllowFrom }) => ({
       effectiveAllowFrom: [...allowFrom, ...storeAllowFrom],
     }));
@@ -208,7 +215,7 @@ describe("handleHubInbound", () => {
   });
 
   it("accepts prefixed store allowFrom entries under allowlist policy", async () => {
-    const sendReplyMock = vi.fn().mockResolvedValue(undefined);
+    const sendReplyMock = createSendReplyMock();
     readStoreAllowFromForDmPolicyMock.mockResolvedValue(["hub:CombinatorAgent"]);
     resolveEffectiveAllowFromListsMock.mockImplementation(({ allowFrom, storeAllowFrom }) => ({
       effectiveAllowFrom: [...allowFrom, ...storeAllowFrom],
@@ -237,7 +244,7 @@ describe("handleHubInbound", () => {
       code: "PAIR1234",
       created: true,
     });
-    const sendReplyMock = vi.fn().mockResolvedValue(undefined);
+    const sendReplyMock = createSendReplyMock();
     createScopedPairingAccessMock.mockReturnValue({
       readStoreForDmPolicy: vi.fn(),
       upsertPairingRequest: upsertPairingRequestMock,

@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+function requireDefined<T>(value: T | null | undefined, name: string): T {
+  if (value == null) {
+    throw new Error(`${name} should be defined`);
+  }
+  return value;
+}
+
 const {
   deleteAccountFromConfigSectionMock,
   listHubAccountIdsMock,
@@ -99,46 +106,75 @@ describe("hubPlugin normalization", () => {
   });
 
   it("normalizes pairing allow entries and approval targets", async () => {
-    expect(hubPlugin.pairing?.normalizeAllowEntry?.(" hub:Brain ")).toBe("brain");
-    expect(hubPlugin.pairing?.normalizeAllowEntry?.("hub:*")).toBe("*");
+    const pairing = requireDefined(hubPlugin.pairing, "hubPlugin.pairing");
+    const notifyApproval = requireDefined(
+      pairing.notifyApproval,
+      "hubPlugin.pairing.notifyApproval",
+    );
 
-    await hubPlugin.pairing?.notifyApproval?.({ id: " hub:Brain " } as any);
+    expect(pairing.normalizeAllowEntry?.(" hub:Brain ")).toBe("brain");
+    expect(pairing.normalizeAllowEntry?.("hub:*")).toBe("*");
+
+    await notifyApproval({ id: " hub:Brain " } as any);
 
     expect(sendMessageHubMock).toHaveBeenCalledWith("Brain", "approved");
   });
 
   it("normalizes config-derived allowFrom and defaultTo values", () => {
     const cfg = { channels: { hub: {} } };
+    const config = requireDefined(hubPlugin.config, "hubPlugin.config");
+    const resolveAllowFrom = requireDefined(
+      config.resolveAllowFrom,
+      "hubPlugin.config.resolveAllowFrom",
+    );
+    const formatAllowFrom = requireDefined(
+      config.formatAllowFrom,
+      "hubPlugin.config.formatAllowFrom",
+    );
+    const resolveDefaultTo = requireDefined(
+      config.resolveDefaultTo,
+      "hubPlugin.config.resolveDefaultTo",
+    );
 
-    expect(hubPlugin.config.resolveAllowFrom({ cfg, accountId: "default" } as any)).toEqual([
+    expect(resolveAllowFrom({ cfg, accountId: "default" } as any)).toEqual([
       "brain",
       "*",
       "combinatoragent",
     ]);
     expect(
-      hubPlugin.config.formatAllowFrom({
+      formatAllowFrom({
         allowFrom: [" hub:Brain ", "COMBINATORAGENT", "*", "hub:"],
       } as any),
     ).toEqual(["brain", "combinatoragent", "*"]);
-    expect(hubPlugin.config.resolveDefaultTo({ cfg, accountId: "default" } as any)).toBe(
-      "TargetAgent",
-    );
+    expect(resolveDefaultTo({ cfg, accountId: "default" } as any)).toBe("TargetAgent");
   });
 
   it("normalizes dm-policy entries, resolver ids, and directory peers", async () => {
     const cfg = { channels: { hub: {} } };
     const account = resolveHubAccountMock.mock.results[0]?.value ?? resolveHubAccountMock();
-    const dmPolicy = hubPlugin.security.resolveDmPolicy({
-      cfg,
-      accountId: "default",
-      account,
-    } as any);
+    const security = requireDefined(hubPlugin.security, "hubPlugin.security");
+    const resolveDmPolicy = requireDefined(
+      security.resolveDmPolicy,
+      "hubPlugin.security.resolveDmPolicy",
+    );
+    const resolver = requireDefined(hubPlugin.resolver, "hubPlugin.resolver");
+    const directory = requireDefined(hubPlugin.directory, "hubPlugin.directory");
+    const listPeers = requireDefined(directory.listPeers, "hubPlugin.directory.listPeers");
+    const dmPolicy = requireDefined(
+      resolveDmPolicy({
+        cfg,
+        accountId: "default",
+        account,
+      } as any),
+      "hubPlugin.security.resolveDmPolicy()",
+    );
+    const normalizeEntry = requireDefined(dmPolicy.normalizeEntry, "dmPolicy.normalizeEntry");
 
-    expect(dmPolicy.normalizeEntry(" hub:Brain ")).toBe("brain");
-    expect(dmPolicy.normalizeEntry("hub:*")).toBe("*");
+    expect(normalizeEntry(" hub:Brain ")).toBe("brain");
+    expect(normalizeEntry("hub:*")).toBe("*");
 
     await expect(
-      hubPlugin.resolver.resolveTargets({
+      resolver.resolveTargets({
         inputs: [" hub:Brain ", " hub: ", "CombinatorAgent"],
       } as any),
     ).resolves.toEqual([
@@ -153,7 +189,7 @@ describe("hubPlugin normalization", () => {
     ]);
 
     await expect(
-      hubPlugin.directory.listPeers({
+      listPeers({
         cfg,
         accountId: "default",
         limit: 10,
