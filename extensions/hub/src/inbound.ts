@@ -17,6 +17,7 @@ import {
 import type { ResolvedHubAccount } from "./accounts.js";
 import { getHubRuntime } from "./runtime.js";
 import { sendMessageHub } from "./send.js";
+import { normalizeHubAllowEntry } from "./targets.js";
 import type { CoreConfig, HubInboundMessage } from "./types.js";
 
 const CHANNEL_ID = "hub" as const;
@@ -25,11 +26,13 @@ function normalizeHubAllowFrom(entries: Array<string | number> | undefined): str
   if (!entries) {
     return [];
   }
-  return entries.map((entry) => String(entry).trim().toLowerCase()).filter(Boolean);
+  return entries
+    .map((entry) => normalizeHubAllowEntry(String(entry)))
+    .filter((entry): entry is string => Boolean(entry));
 }
 
 function isAllowedSender(allowFrom: string[], senderId: string): boolean {
-  const normalized = senderId.trim().toLowerCase();
+  const normalized = normalizeHubAllowEntry(senderId);
   if (!normalized) {
     return false;
   }
@@ -174,7 +177,8 @@ export async function handleHubInbound(params: {
     if (!senderAllowed) {
       if (dmPolicy === "pairing") {
         const { code, created } = await pairing.upsertPairingRequest({
-          id: senderId.toLowerCase(),
+          // Preserve the canonical Hub agent id for notify-on-approve flows.
+          id: senderId,
           meta: { name: senderId },
         });
         if (created) {

@@ -326,6 +326,25 @@ describe("pairing store", () => {
     });
   });
 
+  it("preserves original sender casing through pairing approval", async () => {
+    await withTempStateDir(async () => {
+      const created = await upsertChannelPairingRequest({
+        channel: "telegram",
+        id: "CombinatorAgent",
+        accountId: DEFAULT_ACCOUNT_ID,
+      });
+
+      expect(created.created).toBe(true);
+
+      const approved = await approveChannelPairingCode({
+        channel: "telegram",
+        code: created.code,
+      });
+
+      expect(approved?.id).toBe("CombinatorAgent");
+    });
+  });
+
   it("removes account-scoped allowFrom entries idempotently", async () => {
     await withTempStateDir(async () => {
       await addChannelAllowFromStoreEntry({

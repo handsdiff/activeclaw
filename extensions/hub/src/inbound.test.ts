@@ -106,6 +106,9 @@ describe("handleHubInbound", () => {
         commands: {
           shouldHandleTextCommands: vi.fn(() => true),
         },
+        pairing: {
+          buildPairingReply: vi.fn(() => "pairing reply"),
+        },
         reply: {
           dispatchReplyWithBufferedBlockDispatcher: dispatchReplyWithBufferedBlockDispatcherMock,
           finalizeInboundContext: vi.fn((ctx: Record<string, unknown>) => ctx),
@@ -131,21 +134,25 @@ describe("handleHubInbound", () => {
     });
   });
 
-  it("replies to the plain Hub id while keeping prefixed conversation history keys", async () => {
-    const sendReplyMock = vi.fn().mockResolvedValue(undefined);
-
-    await handleHubInbound({
+  function buildParams(overrides?: {
+    message?: Record<string, unknown>;
+    accountConfig?: Record<string, unknown>;
+    sendReply?: ReturnType<typeof vi.fn>;
+  }) {
+    return {
       message: {
         messageId: "msg-1",
         from: "CombinatorAgent",
         text: "hello",
         timestamp: 123,
+        ...overrides?.message,
       },
       account: {
         accountId: "default",
         config: {
           dmPolicy: "open",
           allowFrom: ["*"],
+          ...overrides?.accountConfig,
         },
       } as any,
       config: {
@@ -158,8 +165,14 @@ describe("handleHubInbound", () => {
         error: vi.fn(),
         log: vi.fn(),
       } as any,
-      sendReply: sendReplyMock,
-    });
+      sendReply: overrides?.sendReply ?? vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  it("replies to the plain Hub id while keeping prefixed conversation history keys", async () => {
+    const sendReplyMock = vi.fn().mockResolvedValue(undefined);
+
+    await handleHubInbound(buildParams({ sendReply: sendReplyMock }));
 
     expect(sendReplyMock).toHaveBeenCalledWith("CombinatorAgent", "reply body");
     expect(sendMessageHubMock).not.toHaveBeenCalled();
@@ -168,5 +181,86 @@ describe("handleHubInbound", () => {
         conversationKey: "hub:CombinatorAgent",
       }),
     );
+  });
+
+  it("accepts prefixed config allowFrom entries under allowlist policy", async () => {
+    const sendReplyMock = vi.fn().mockResolvedValue(undefined);
+    resolveEffectiveAllowFromListsMock.mockImplementation(({ allowFrom, storeAllowFrom }) => ({
+      effectiveAllowFrom: [...allowFrom, ...storeAllowFrom],
+    }));
+
+    await handleHubInbound(
+      buildParams({
+        sendReply: sendReplyMock,
+        accountConfig: {
+          dmPolicy: "allowlist",
+          allowFrom: ["hub:CombinatorAgent"],
+        },
+      }),
+    );
+
+    expect(sendReplyMock).toHaveBeenCalledWith("CombinatorAgent", "reply body");
+    expect(resolveEffectiveAllowFromListsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowFrom: ["combinatoragent"],
+      }),
+    );
+  });
+
+  it("accepts prefixed store allowFrom entries under allowlist policy", async () => {
+    const sendReplyMock = vi.fn().mockResolvedValue(undefined);
+    readStoreAllowFromForDmPolicyMock.mockResolvedValue(["hub:CombinatorAgent"]);
+    resolveEffectiveAllowFromListsMock.mockImplementation(({ allowFrom, storeAllowFrom }) => ({
+      effectiveAllowFrom: [...allowFrom, ...storeAllowFrom],
+    }));
+
+    await handleHubInbound(
+      buildParams({
+        sendReply: sendReplyMock,
+        accountConfig: {
+          dmPolicy: "allowlist",
+          allowFrom: [],
+        },
+      }),
+    );
+
+    expect(sendReplyMock).toHaveBeenCalledWith("CombinatorAgent", "reply body");
+    expect(resolveEffectiveAllowFromListsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        storeAllowFrom: ["combinatoragent"],
+      }),
+    );
+  });
+
+  it("preserves sender casing when creating Hub pairing requests", async () => {
+    const upsertPairingRequestMock = vi.fn().mockResolvedValue({
+      code: "PAIR1234",
+      created: true,
+    });
+    const sendReplyMock = vi.fn().mockResolvedValue(undefined);
+    createScopedPairingAccessMock.mockReturnValue({
+      readStoreForDmPolicy: vi.fn(),
+      upsertPairingRequest: upsertPairingRequestMock,
+    });
+    resolveEffectiveAllowFromListsMock.mockImplementation(({ allowFrom, storeAllowFrom }) => ({
+      effectiveAllowFrom: [...allowFrom, ...storeAllowFrom],
+    }));
+
+    await handleHubInbound(
+      buildParams({
+        sendReply: sendReplyMock,
+        accountConfig: {
+          dmPolicy: "pairing",
+          allowFrom: [],
+        },
+      }),
+    );
+
+    expect(upsertPairingRequestMock).toHaveBeenCalledWith({
+      id: "CombinatorAgent",
+      meta: { name: "CombinatorAgent" },
+    });
+    expect(sendReplyMock).toHaveBeenCalledWith("CombinatorAgent", "pairing reply");
+    expect(dispatchReplyWithBufferedBlockDispatcherMock).not.toHaveBeenCalled();
   });
 });
