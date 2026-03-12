@@ -1,4 +1,3 @@
-import { resolveControlUiLinks } from "../../commands/onboard-helpers.js";
 import { formatConfigIssueLine } from "../../config/issue-format.js";
 import {
   resolveGatewayLaunchAgentLabel,
@@ -10,7 +9,6 @@ import {
   isSystemdUnavailableDetail,
   renderSystemdUnavailableHints,
 } from "../../daemon/systemd-hints.js";
-import { isWSLEnv } from "../../infra/wsl.js";
 import { getResolvedLoggerSettings } from "../../logging.js";
 import { defaultRuntime } from "../../runtime.js";
 import { colorize } from "../../terminal/theme.js";
@@ -147,18 +145,9 @@ export function printDaemonStatus(status: DaemonStatus, opts: { json: boolean })
       `${label("Gateway:")} bind=${infoText(status.gateway.bindMode)} (${infoText(bindHost)}), port=${infoText(String(status.gateway.port))} (${infoText(status.gateway.portSource)})`,
     );
     defaultRuntime.log(`${label("Probe target:")} ${infoText(status.gateway.probeUrl)}`);
-    const controlUiEnabled = status.config?.daemon?.controlUi?.enabled ?? true;
-    if (!controlUiEnabled) {
-      defaultRuntime.log(`${label("Dashboard:")} ${warnText("disabled")}`);
-    } else {
-      const links = resolveControlUiLinks({
-        port: status.gateway.port,
-        bind: status.gateway.bindMode,
-        customBindHost: status.gateway.customBindHost,
-        basePath: status.config?.daemon?.controlUi?.basePath,
-      });
-      defaultRuntime.log(`${label("Dashboard:")} ${infoText(links.httpUrl)}`);
-    }
+    defaultRuntime.log(
+      `${label("Gateway HTTP:")} ${infoText(`http://127.0.0.1:${status.gateway.port}/`)}`,
+    );
     if (status.gateway.probeNote) {
       defaultRuntime.log(`${label("Probe note:")} ${infoText(status.gateway.probeNote)}`);
     }
@@ -198,7 +187,7 @@ export function printDaemonStatus(status: DaemonStatus, opts: { json: boolean })
     process.platform === "linux" && isSystemdUnavailableDetail(service.runtime?.detail);
   if (systemdUnavailable) {
     defaultRuntime.error(errorText("systemd user services unavailable."));
-    for (const hint of renderSystemdUnavailableHints({ wsl: isWSLEnv() })) {
+    for (const hint of renderSystemdUnavailableHints()) {
       defaultRuntime.error(errorText(hint));
     }
     spacer();

@@ -28,10 +28,15 @@ const shouldEagerRegisterSubcommands = (_argv: string[]) => {
   return isTruthyEnvValue(process.env.OPENCLAW_DISABLE_LAZY_SUBCOMMANDS);
 };
 
-const loadConfig = async (): Promise<OpenClawConfig> => {
-  const mod = await import("../../config/config.js");
-  return mod.loadConfig();
-};
+export const loadValidatedConfigForPluginRegistration =
+  async (): Promise<OpenClawConfig | null> => {
+    const mod = await import("../../config/config.js");
+    const snapshot = await mod.readConfigFileSnapshot();
+    if (!snapshot.valid) {
+      return null;
+    }
+    return mod.loadConfig();
+  };
 
 // Note for humans and agents:
 // If you update the list of commands, also check whether they have subcommands
@@ -93,38 +98,11 @@ const entries: SubCliEntry[] = [
   },
   {
     name: "approvals",
-    description: "Manage exec approvals (gateway or node host)",
+    description: "Manage exec approvals",
     hasSubcommands: true,
     register: async (program) => {
       const mod = await import("../exec-approvals-cli.js");
       mod.registerExecApprovalsCli(program);
-    },
-  },
-  {
-    name: "nodes",
-    description: "Manage gateway-owned node pairing and node commands",
-    hasSubcommands: true,
-    register: async (program) => {
-      const mod = await import("../nodes-cli.js");
-      mod.registerNodesCli(program);
-    },
-  },
-  {
-    name: "devices",
-    description: "Device pairing + token management",
-    hasSubcommands: true,
-    register: async (program) => {
-      const mod = await import("../devices-cli.js");
-      mod.registerDevicesCli(program);
-    },
-  },
-  {
-    name: "node",
-    description: "Run and manage the headless node host service",
-    hasSubcommands: true,
-    register: async (program) => {
-      const mod = await import("../node-cli.js");
-      mod.registerNodeCli(program);
     },
   },
   {
@@ -191,24 +169,6 @@ const entries: SubCliEntry[] = [
     },
   },
   {
-    name: "qr",
-    description: "Generate iOS pairing QR/setup code",
-    hasSubcommands: false,
-    register: async (program) => {
-      const mod = await import("../qr-cli.js");
-      mod.registerQrCli(program);
-    },
-  },
-  {
-    name: "clawbot",
-    description: "Legacy clawbot command aliases",
-    hasSubcommands: true,
-    register: async (program) => {
-      const mod = await import("../clawbot-cli.js");
-      mod.registerClawbotCli(program);
-    },
-  },
-  {
     name: "pairing",
     description: "Secure DM pairing (approve inbound requests)",
     hasSubcommands: true,
@@ -217,7 +177,10 @@ const entries: SubCliEntry[] = [
       // The pairing CLI calls listPairingChannels() at registration time,
       // which requires the plugin registry to be populated with channel plugins.
       const { registerPluginCliCommands } = await import("../../plugins/cli.js");
-      registerPluginCliCommands(program, await loadConfig());
+      const config = await loadValidatedConfigForPluginRegistration();
+      if (config) {
+        registerPluginCliCommands(program, config);
+      }
       const mod = await import("../pairing-cli.js");
       mod.registerPairingCli(program);
     },
@@ -230,7 +193,10 @@ const entries: SubCliEntry[] = [
       const mod = await import("../plugins-cli.js");
       mod.registerPluginsCli(program);
       const { registerPluginCliCommands } = await import("../../plugins/cli.js");
-      registerPluginCliCommands(program, await loadConfig());
+      const config = await loadValidatedConfigForPluginRegistration();
+      if (config) {
+        registerPluginCliCommands(program, config);
+      }
     },
   },
   {

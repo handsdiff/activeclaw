@@ -124,7 +124,7 @@ function defaultIndexHTML() {
 
   function send(name, sourceComponentId) {
     if (!hasHelper()) {
-      log("No action bridge found. Ensure you're viewing this on an iOS/Android OpenClaw node canvas.");
+      log("No action bridge found. Ensure you're viewing this from a Canvas-capable OpenClaw client.");
       return;
     }
     const sendUserAction =

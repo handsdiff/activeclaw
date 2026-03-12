@@ -2,8 +2,6 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 
-// On Windows, `.cmd` launchers can fail with `spawn EINVAL` when invoked without a shell
-// (especially under GitHub Actions + Git Bash). Use `shell: true` and let the shell resolve pnpm.
 const pnpm = "pnpm";
 
 const unitIsolatedFilesRaw = [
@@ -31,6 +29,8 @@ const unitIsolatedFilesRaw = [
   "src/commands/doctor.runs-legacy-state-migrations-yes-mode-without.test.ts",
   // Setup-heavy CLI update flow suite; move off unit-fast critical path.
   "src/cli/update-cli.test.ts",
+  // Uses temp repos + module cache resets; keep it off vmForks to avoid ref-resolution flakes.
+  "src/infra/git-commit.test.ts",
   // Expensive schema build/bootstrap checks; keep coverage but run in isolated lane.
   "src/config/schema.test.ts",
   "src/config/schema.tags.test.ts",
@@ -58,8 +58,6 @@ const unitIsolatedFilesRaw = [
   "src/agents/skills.buildworkspaceskillsnapshot.test.ts",
   "src/browser/extension-relay.test.ts",
   "extensions/acpx/src/runtime.test.ts",
-  // Shell-heavy script harness can contend under vmForks startup bursts.
-  "test/scripts/ios-team-id.test.ts",
   // Heavy runner/exec/archive suites are stable but contend on shared resources under vmForks.
   "src/agents/pi-embedded-runner.test.ts",
   "src/agents/bash-tools.test.ts",
@@ -86,33 +84,44 @@ const unitIsolatedFilesRaw = [
   "src/slack/monitor/slash.test.ts",
   // Uses process-level unhandledRejection listeners; keep it off vmForks to avoid cross-file leakage.
   "src/imessage/monitor.shutdown.unhandled-rejection.test.ts",
+  // Mutates process.cwd() and mocks core module loaders; isolate from the shared fast lane.
+  "src/infra/git-commit.test.ts",
 ];
 const unitIsolatedFiles = unitIsolatedFilesRaw.filter((file) => fs.existsSync(file));
 
 const children = new Set();
 const isCI = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
 const isMacOS = process.platform === "darwin" || process.env.RUNNER_OS === "macOS";
-const isWindows = process.platform === "win32" || process.env.RUNNER_OS === "Windows";
-const isWindowsCi = isCI && isWindows;
 const hostCpuCount = os.cpus().length;
 const hostMemoryGiB = Math.floor(os.totalmem() / 1024 ** 3);
 // Keep aggressive local defaults for high-memory workstations (Mac Studio class).
 const highMemLocalHost = !isCI && hostMemoryGiB >= 96;
 const lowMemLocalHost = !isCI && hostMemoryGiB < 64;
 const nodeMajor = Number.parseInt(process.versions.node.split(".")[0] ?? "", 10);
-// vmForks is a big win for transform/import heavy suites, but Node 24 had
-// regressions with Vitest's vm runtime in this repo, and low-memory local hosts
+// vmForks is a big win for transform/import heavy suites, but Node 24+
+// regressed with Vitest's vm runtime in this repo, and low-memory local hosts
 // are more likely to hit per-worker V8 heap ceilings. Keep it opt-out via
 // OPENCLAW_TEST_VM_FORKS=0, and let users force-enable with =1.
-const supportsVmForks = Number.isFinite(nodeMajor) ? nodeMajor !== 24 : true;
+const supportsVmForks = Number.isFinite(nodeMajor) ? nodeMajor < 24 : true;
 const useVmForks =
   process.env.OPENCLAW_TEST_VM_FORKS === "1" ||
-  (process.env.OPENCLAW_TEST_VM_FORKS !== "0" && !isWindows && supportsVmForks && !lowMemLocalHost);
+  (process.env.OPENCLAW_TEST_VM_FORKS !== "0" && supportsVmForks && !lowMemLocalHost);
 const disableIsolation = process.env.OPENCLAW_TEST_NO_ISOLATE === "1";
 const includeGatewaySuite = process.env.OPENCLAW_TEST_INCLUDE_GATEWAY === "1";
 const includeExtensionsSuite = process.env.OPENCLAW_TEST_INCLUDE_EXTENSIONS === "1";
+const rawTestProfile = process.env.OPENCLAW_TEST_PROFILE?.trim().toLowerCase();
+const testProfile =
+  rawTestProfile === "low" ||
+  rawTestProfile === "max" ||
+  rawTestProfile === "normal" ||
+  rawTestProfile === "serial"
+    ? rawTestProfile
+    : "normal";
+// Even on low-memory hosts, keep the isolated lane split so files like
+// git-commit.test.ts still get the worker/process isolation they require.
+const shouldSplitUnitRuns = testProfile !== "serial";
 const runs = [
-  ...(useVmForks
+  ...(shouldSplitUnitRuns
     ? [
         {
           name: "unit-fast",
@@ -121,7 +130,7 @@ const runs = [
             "run",
             "--config",
             "vitest.unit.config.ts",
-            "--pool=vmForks",
+            `--pool=${useVmForks ? "vmForks" : "forks"}`,
             ...(disableIsolation ? ["--isolate=false"] : []),
             ...unitIsolatedFiles.flatMap((file) => ["--exclude", file]),
           ],
@@ -141,7 +150,14 @@ const runs = [
     : [
         {
           name: "unit",
-          args: ["vitest", "run", "--config", "vitest.unit.config.ts"],
+          args: [
+            "vitest",
+            "run",
+            "--config",
+            "vitest.unit.config.ts",
+            `--pool=${useVmForks ? "vmForks" : "forks"}`,
+            ...(disableIsolation ? ["--isolate=false"] : []),
+          ],
         },
       ]),
   ...(includeExtensionsSuite
@@ -178,7 +194,7 @@ const runs = [
 const shardOverride = Number.parseInt(process.env.OPENCLAW_TEST_SHARDS ?? "", 10);
 const configuredShardCount =
   Number.isFinite(shardOverride) && shardOverride > 1 ? shardOverride : null;
-const shardCount = configuredShardCount ?? (isWindowsCi ? 2 : 1);
+const shardCount = configuredShardCount ?? 1;
 const shardIndexOverride = (() => {
   const parsed = Number.parseInt(process.env.OPENCLAW_TEST_SHARD_INDEX ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -201,20 +217,12 @@ if (shardIndexOverride !== null && shardIndexOverride > shardCount) {
   );
   process.exit(2);
 }
-const windowsCiArgs = isWindowsCi ? ["--dangerouslyIgnoreUnhandledErrors"] : [];
 const silentArgs =
   process.env.OPENCLAW_TEST_SHOW_PASSED_LOGS === "1" ? [] : ["--silent=passed-only"];
 const rawPassthroughArgs = process.argv.slice(2);
 const passthroughArgs =
   rawPassthroughArgs[0] === "--" ? rawPassthroughArgs.slice(1) : rawPassthroughArgs;
-const rawTestProfile = process.env.OPENCLAW_TEST_PROFILE?.trim().toLowerCase();
-const testProfile =
-  rawTestProfile === "low" ||
-  rawTestProfile === "max" ||
-  rawTestProfile === "normal" ||
-  rawTestProfile === "serial"
-    ? rawTestProfile
-    : "normal";
+const topLevelParallelEnabled = testProfile !== "low" && testProfile !== "serial";
 const overrideWorkers = Number.parseInt(process.env.OPENCLAW_TEST_WORKERS ?? "", 10);
 const resolvedOverride =
   Number.isFinite(overrideWorkers) && overrideWorkers > 0 ? overrideWorkers : null;
@@ -222,7 +230,6 @@ const parallelGatewayEnabled =
   process.env.OPENCLAW_TEST_PARALLEL_GATEWAY === "1" || (!isCI && highMemLocalHost);
 // Keep gateway serial by default except when explicitly requested or on high-memory local hosts.
 const keepGatewaySerial =
-  isWindowsCi ||
   process.env.OPENCLAW_TEST_SERIAL_GATEWAY === "1" ||
   testProfile === "serial" ||
   !parallelGatewayEnabled;
@@ -232,9 +239,7 @@ const baseLocalWorkers = Math.max(4, Math.min(16, hostCpuCount));
 const loadAwareDisabledRaw = process.env.OPENCLAW_TEST_LOAD_AWARE?.trim().toLowerCase();
 const loadAwareDisabled = loadAwareDisabledRaw === "0" || loadAwareDisabledRaw === "false";
 const loadRatio =
-  !isCI && !loadAwareDisabled && process.platform !== "win32" && hostCpuCount > 0
-    ? os.loadavg()[0] / hostCpuCount
-    : 0;
+  !isCI && !loadAwareDisabled && hostCpuCount > 0 ? os.loadavg()[0] / hostCpuCount : 0;
 // Keep the fast-path unchanged on normal load; only throttle under extreme host pressure.
 const extremeLoadScale = loadRatio >= 1.1 ? 0.75 : loadRatio >= 1 ? 0.85 : 1;
 const localWorkers = Math.max(4, Math.min(16, Math.floor(baseLocalWorkers * extremeLoadScale)));
@@ -323,7 +328,7 @@ const maxOldSpaceSizeMb = (() => {
   if (Number.isFinite(parsed) && parsed > 0) {
     return parsed;
   }
-  if (isCI && !isWindows) {
+  if (isCI) {
     return DEFAULT_CI_MAX_OLD_SPACE_SIZE_MB;
   }
   return null;
@@ -339,15 +344,8 @@ const runOnce = (entry, extraArgs = []) =>
         ? entry.args.map((arg) => (arg === "--pool=vmForks" ? "--pool=forks" : arg))
         : entry.args;
     const args = maxWorkers
-      ? [
-          ...entryArgs,
-          "--maxWorkers",
-          String(maxWorkers),
-          ...silentArgs,
-          ...windowsCiArgs,
-          ...extraArgs,
-        ]
-      : [...entryArgs, ...silentArgs, ...windowsCiArgs, ...extraArgs];
+      ? [...entryArgs, "--maxWorkers", String(maxWorkers), ...silentArgs, ...extraArgs]
+      : [...entryArgs, ...silentArgs, ...extraArgs];
     const nodeOptions = process.env.NODE_OPTIONS ?? "";
     const nextNodeOptions = WARNING_SUPPRESSION_FLAGS.reduce(
       (acc, flag) => (acc.includes(flag) ? acc : `${acc} ${flag}`.trim()),
@@ -365,7 +363,6 @@ const runOnce = (entry, extraArgs = []) =>
       child = spawn(pnpm, args, {
         stdio: "inherit",
         env: { ...process.env, VITEST_GROUP: entry.name, NODE_OPTIONS: resolvedNodeOptions },
-        shell: isWindows,
       });
     } catch (err) {
       console.error(`[test-parallel] spawn failed: ${String(err)}`);
@@ -399,6 +396,23 @@ const run = async (entry) => {
   return 0;
 };
 
+const runEntries = async (entries) => {
+  if (topLevelParallelEnabled) {
+    const codes = await Promise.all(entries.map(run));
+    return codes.find((code) => code !== 0);
+  }
+
+  for (const entry of entries) {
+    // eslint-disable-next-line no-await-in-loop
+    const code = await run(entry);
+    if (code !== 0) {
+      return code;
+    }
+  }
+
+  return undefined;
+};
+
 const shutdown = (signal) => {
   for (const child of children) {
     child.kill(signal);
@@ -411,16 +425,8 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 if (passthroughArgs.length > 0) {
   const maxWorkers = maxWorkersForRun("unit");
   const args = maxWorkers
-    ? [
-        "vitest",
-        "run",
-        "--maxWorkers",
-        String(maxWorkers),
-        ...silentArgs,
-        ...windowsCiArgs,
-        ...passthroughArgs,
-      ]
-    : ["vitest", "run", ...silentArgs, ...windowsCiArgs, ...passthroughArgs];
+    ? ["vitest", "run", "--maxWorkers", String(maxWorkers), ...silentArgs, ...passthroughArgs]
+    : ["vitest", "run", ...silentArgs, ...passthroughArgs];
   const nodeOptions = process.env.NODE_OPTIONS ?? "";
   const nextNodeOptions = WARNING_SUPPRESSION_FLAGS.reduce(
     (acc, flag) => (acc.includes(flag) ? acc : `${acc} ${flag}`.trim()),
@@ -432,7 +438,6 @@ if (passthroughArgs.length > 0) {
       child = spawn(pnpm, args, {
         stdio: "inherit",
         env: { ...process.env, NODE_OPTIONS: nextNodeOptions },
-        shell: isWindows,
       });
     } catch (err) {
       console.error(`[test-parallel] spawn failed: ${String(err)}`);
@@ -451,8 +456,7 @@ if (passthroughArgs.length > 0) {
   process.exit(Number(code) || 0);
 }
 
-const parallelCodes = await Promise.all(parallelRuns.map(run));
-const failedParallel = parallelCodes.find((code) => code !== 0);
+const failedParallel = await runEntries(parallelRuns);
 if (failedParallel !== undefined) {
   process.exit(failedParallel);
 }

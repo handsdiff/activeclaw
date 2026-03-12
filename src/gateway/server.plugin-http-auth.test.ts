@@ -32,29 +32,25 @@ function respondJsonRoute(res: ServerResponse, route: string): true {
   return true;
 }
 
-function createRootMountedControlUiOverrides(handlePluginRequest: PluginRequestHandler) {
-  return {
-    controlUiEnabled: true,
-    controlUiBasePath: "",
-    controlUiRoot: { kind: "missing" as const },
-    handlePluginRequest,
-  };
-}
-
-const withRootMountedControlUiServer = (params: {
-  prefix: string;
-  handlePluginRequest: PluginRequestHandler;
-  run: Parameters<typeof withGatewayServer>[0]["run"];
-}) =>
-  withPluginGatewayServer({
-    prefix: params.prefix,
-    resolvedAuth: AUTH_NONE,
-    overrides: createRootMountedControlUiOverrides(params.handlePluginRequest),
-    run: params.run,
-  });
-
 const withPluginGatewayServer = (params: Parameters<typeof withGatewayServer>[0]) =>
   withGatewayServer(params);
+
+const PROBE_CASES = [
+  { path: "/health", status: "live" },
+  { path: "/healthz", status: "live" },
+  { path: "/ready", status: "ready" },
+  { path: "/readyz", status: "ready" },
+] as const;
+
+async function expectProbeRoutesHealthy(server: Parameters<typeof sendRequest>[0]) {
+  for (const probeCase of PROBE_CASES) {
+    const response = await sendRequest(server, { path: probeCase.path });
+    expect(response.res.statusCode, probeCase.path).toBe(200);
+    expect(response.getBody(), probeCase.path).toBe(
+      JSON.stringify({ ok: true, status: probeCase.status }),
+    );
+  }
+}
 
 function createProtectedPluginAuthOverrides(handlePluginRequest: PluginRequestHandler) {
   return {
@@ -98,20 +94,7 @@ describe("gateway plugin HTTP auth boundary", () => {
       prefix: "openclaw-plugin-http-probes-test-",
       resolvedAuth: AUTH_TOKEN,
       run: async (server) => {
-        const probeCases = [
-          { path: "/health", status: "live" },
-          { path: "/healthz", status: "live" },
-          { path: "/ready", status: "ready" },
-          { path: "/readyz", status: "ready" },
-        ] as const;
-
-        for (const probeCase of probeCases) {
-          const response = await sendRequest(server, { path: probeCase.path });
-          expect(response.res.statusCode, probeCase.path).toBe(200);
-          expect(response.getBody(), probeCase.path).toBe(
-            JSON.stringify({ ok: true, status: probeCase.status }),
-          );
-        }
+        await expectProbeRoutesHealthy(server);
       },
     });
   });
@@ -394,102 +377,6 @@ describe("gateway plugin HTTP auth boundary", () => {
         });
         expect(authenticatedDeepEncodedChannel.res.statusCode).toBe(200);
         expect(authenticatedDeepEncodedChannel.getBody()).toContain('"route":"channel-default"');
-      },
-    });
-  });
-
-  test("serves plugin routes before control ui spa fallback", async () => {
-    const handlePluginRequest = vi.fn(async (req: IncomingMessage, res: ServerResponse) => {
-      const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
-      if (pathname === "/plugins/diffs/view/demo-id/demo-token") {
-        res.statusCode = 200;
-        res.setHeader("Content-Type", "text/html; charset=utf-8");
-        res.end("<!doctype html><title>diff-view</title>");
-        return true;
-      }
-      return false;
-    });
-
-    await withRootMountedControlUiServer({
-      prefix: "openclaw-plugin-http-control-ui-precedence-test-",
-      handlePluginRequest,
-      run: async (server) => {
-        const response = await sendRequest(server, {
-          path: "/plugins/diffs/view/demo-id/demo-token",
-        });
-
-        expect(response.res.statusCode).toBe(200);
-        expect(response.getBody()).toContain("diff-view");
-        expect(handlePluginRequest).toHaveBeenCalledTimes(1);
-      },
-    });
-  });
-
-  test("passes POST webhook routes through root-mounted control ui to plugins", async () => {
-    const handlePluginRequest = vi.fn(async (req: IncomingMessage, res: ServerResponse) => {
-      const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
-      if (req.method !== "POST" || pathname !== "/bluebubbles-webhook") {
-        return false;
-      }
-      res.statusCode = 200;
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.end("plugin-webhook");
-      return true;
-    });
-
-    await withRootMountedControlUiServer({
-      prefix: "openclaw-plugin-http-control-ui-webhook-post-test-",
-      handlePluginRequest,
-      run: async (server) => {
-        const response = await sendRequest(server, {
-          path: "/bluebubbles-webhook",
-          method: "POST",
-        });
-
-        expect(response.res.statusCode).toBe(200);
-        expect(response.getBody()).toBe("plugin-webhook");
-        expect(handlePluginRequest).toHaveBeenCalledTimes(1);
-      },
-    });
-  });
-
-  test("plugin routes take priority over control ui catch-all", async () => {
-    const handlePluginRequest = vi.fn(async (req: IncomingMessage, res: ServerResponse) => {
-      const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
-      if (pathname === "/my-plugin/inbound") {
-        res.statusCode = 200;
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end("plugin-handled");
-        return true;
-      }
-      return false;
-    });
-
-    await withRootMountedControlUiServer({
-      prefix: "openclaw-plugin-http-control-ui-shadow-test-",
-      handlePluginRequest,
-      run: async (server) => {
-        const response = await sendRequest(server, { path: "/my-plugin/inbound" });
-
-        expect(response.res.statusCode).toBe(200);
-        expect(response.getBody()).toContain("plugin-handled");
-        expect(handlePluginRequest).toHaveBeenCalledTimes(1);
-      },
-    });
-  });
-
-  test("unmatched plugin paths fall through to control ui", async () => {
-    const handlePluginRequest = vi.fn(async () => false);
-
-    await withRootMountedControlUiServer({
-      prefix: "openclaw-plugin-http-control-ui-fallthrough-test-",
-      handlePluginRequest,
-      run: async (server) => {
-        const response = await sendRequest(server, { path: "/chat" });
-
-        expect(handlePluginRequest).toHaveBeenCalledTimes(1);
-        expect(response.res.statusCode).toBe(503);
-        expect(response.getBody()).toContain("Control UI assets not found");
       },
     });
   });

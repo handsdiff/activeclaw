@@ -7,13 +7,12 @@ import { callGatewayTool } from "./tools/gateway.js";
 
 export type RequestExecApprovalDecisionParams = {
   id: string;
-  command: string;
+  command?: string;
   commandArgv?: string[];
   systemRunPlan?: SystemRunApprovalPlan;
   env?: Record<string, string>;
   cwd: string;
-  nodeId?: string;
-  host: "gateway" | "node";
+  host: "gateway";
   security: ExecSecurity;
   ask: ExecAsk;
   agentId?: string;
@@ -35,12 +34,11 @@ function buildExecApprovalRequestToolParams(
 ): ExecApprovalRequestToolParams {
   return {
     id: params.id,
-    command: params.command,
-    commandArgv: params.commandArgv,
+    ...(params.command ? { command: params.command } : {}),
+    ...(params.commandArgv ? { commandArgv: params.commandArgv } : {}),
     systemRunPlan: params.systemRunPlan,
     env: params.env,
     cwd: params.cwd,
-    nodeId: params.nodeId,
     host: params.host,
     security: params.security,
     ask: params.ask,
@@ -150,13 +148,12 @@ export async function requestExecApprovalDecision(
 
 type HostExecApprovalParams = {
   approvalId: string;
-  command: string;
+  command?: string;
   commandArgv?: string[];
   systemRunPlan?: SystemRunApprovalPlan;
   env?: Record<string, string>;
   workdir: string;
-  host: "gateway" | "node";
-  nodeId?: string;
+  host: "gateway";
   security: ExecSecurity;
   ask: ExecAsk;
   agentId?: string;
@@ -211,7 +208,6 @@ function buildHostApprovalDecisionParams(
     systemRunPlan: params.systemRunPlan,
     env: params.env,
     cwd: params.workdir,
-    nodeId: params.nodeId,
     host: params.host,
     security: params.security,
     ask: params.ask,

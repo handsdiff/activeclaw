@@ -1,5 +1,5 @@
 ---
-summary: "OpenClaw is a multi-channel gateway for AI agents that runs on any OS."
+summary: "OpenClaw is a multi-channel gateway for AI agents that runs on macOS and Linux."
 read_when:
   - Introducing OpenClaw to newcomers
 title: "OpenClaw"
@@ -25,7 +25,7 @@ title: "OpenClaw"
 > _"EXFOLIATE! EXFOLIATE!"_ — A space lobster, probably
 
 <p align="center">
-  <strong>Any OS gateway for AI agents across WhatsApp, Telegram, Discord, iMessage, and more.</strong><br />
+  <strong>Self-hosted gateway for AI agents across WhatsApp, Telegram, Discord, iMessage, and more.</strong><br />
   Send a message, get an agent response from your pocket. Plugins add Mattermost and more.
 </p>
 
@@ -64,8 +64,6 @@ flowchart LR
   B --> C["Pi agent"]
   B --> D["CLI"]
   B --> E["Web Control UI"]
-  B --> F["macOS app"]
-  B --> G["iOS and Android nodes"]
 ```
 
 The Gateway is the single source of truth for sessions, routing, and channel connections.
@@ -86,10 +84,10 @@ The Gateway is the single source of truth for sessions, routing, and channel con
     Send and receive images, audio, and documents.
   </Card>
   <Card title="Web Control UI" icon="monitor">
-    Browser dashboard for chat, config, sessions, and nodes.
+    Browser dashboard for chat, config, sessions, and operations.
   </Card>
-  <Card title="Mobile nodes" icon="smartphone">
-    Pair iOS and Android nodes for Canvas, camera/screen, and voice-enabled workflows.
+  <Card title="CLI + Web UI" icon="terminal">
+    Operate the gateway from the terminal or the browser dashboard.
   </Card>
 </Columns>
 
@@ -124,7 +122,7 @@ Open the browser Control UI after the Gateway starts.
 - Remote access: [Web surfaces](/web) and [Tailscale](/gateway/tailscale)
 
 <p align="center">
-  <img src="whatsapp-openclaw.jpg" alt="OpenClaw" width="420" />
+  <img src="/whatsapp-openclaw.jpg" alt="OpenClaw" width="420" />
 </p>
 
 ## Configuration (optional)
@@ -163,8 +161,8 @@ Example:
   <Card title="Channels" href="/channels/telegram" icon="message-square">
     Channel-specific setup for WhatsApp, Telegram, Discord, and more.
   </Card>
-  <Card title="Nodes" href="/nodes" icon="smartphone">
-    iOS and Android nodes with pairing, Canvas, camera/screen, and device actions.
+  <Card title="Tools" href="/tools" icon="wrench">
+    Browser, canvas, cron, messaging, and runtime tool surfaces.
   </Card>
   <Card title="Help" href="/help" icon="life-buoy">
     Common fixes and troubleshooting entry point.

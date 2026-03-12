@@ -17,7 +17,7 @@ describe("canvas a2ui copy", () => {
   it("throws a helpful error when assets are missing", async () => {
     await withA2uiFixture(async (dir) => {
       await expect(copyA2uiAssets({ srcDir: dir, outDir: path.join(dir, "out") })).rejects.toThrow(
-        'Run "pnpm canvas:a2ui:bundle"',
+        "Missing A2UI bundle assets in src/canvas-host/a2ui.",
       );
     });
   });

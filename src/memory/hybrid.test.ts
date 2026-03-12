@@ -2,24 +2,30 @@ import { describe, expect, it } from "vitest";
 import { bm25RankToScore, buildFtsQuery, mergeHybridResults } from "./hybrid.js";
 
 describe("memory hybrid helpers", () => {
-  it("buildFtsQuery tokenizes and OR-joins", () => {
-    expect(buildFtsQuery("hello world")).toBe('"hello" OR "world"');
-    expect(buildFtsQuery("FOO_bar baz-1")).toBe('"FOO_bar" OR "baz" OR "1"');
+  it("buildFtsQuery tokenizes and AND-joins", () => {
+    expect(buildFtsQuery("hello world")).toBe('"hello" AND "world"');
+    expect(buildFtsQuery("FOO_bar baz-1")).toBe('"FOO_bar" AND "baz" AND "1"');
     expect(buildFtsQuery("金银价格")).toBe('"金银价格"');
-    expect(buildFtsQuery("価格 2026年")).toBe('"価格" OR "2026年"');
+    expect(buildFtsQuery("価格 2026年")).toBe('"価格" AND "2026年"');
     expect(buildFtsQuery("   ")).toBeNull();
   });
 
   it("bm25RankToScore is monotonic and clamped", () => {
-    // rank=0 means no relevance signal → low score
-    expect(bm25RankToScore(0)).toBeCloseTo(0);
-    // More negative BM25 rank = better match = higher score
-    expect(bm25RankToScore(-1)).toBeCloseTo(0.5);
-    expect(bm25RankToScore(-10)).toBeGreaterThan(bm25RankToScore(-1));
-    expect(bm25RankToScore(-100)).toBeGreaterThan(0.99);
-    // Positive ranks (shouldn't happen with BM25 but handle gracefully)
+    expect(bm25RankToScore(0)).toBeCloseTo(1);
     expect(bm25RankToScore(1)).toBeCloseTo(0.5);
-    expect(bm25RankToScore(10)).toBeGreaterThan(bm25RankToScore(1));
+    expect(bm25RankToScore(10)).toBeLessThan(bm25RankToScore(1));
+    expect(bm25RankToScore(-100)).toBeCloseTo(1, 1);
+  });
+
+  it("bm25RankToScore preserves FTS5 BM25 relevance ordering", () => {
+    const strongest = bm25RankToScore(-4.2);
+    const middle = bm25RankToScore(-2.1);
+    const weakest = bm25RankToScore(-0.5);
+
+    expect(strongest).toBeGreaterThan(middle);
+    expect(middle).toBeGreaterThan(weakest);
+    expect(strongest).not.toBe(middle);
+    expect(middle).not.toBe(weakest);
   });
 
   it("mergeHybridResults unions by id and combines weighted scores", async () => {

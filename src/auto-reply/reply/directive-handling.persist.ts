@@ -128,10 +128,6 @@ export async function persistInlineDirectives(params: {
         sessionEntry.execAsk = directives.execAsk;
         updated = true;
       }
-      if (directives.execNode) {
-        sessionEntry.execNode = directives.execNode;
-        updated = true;
-      }
     }
 
     const modelDirective =

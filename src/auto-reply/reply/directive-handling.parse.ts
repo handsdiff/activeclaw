@@ -33,16 +33,13 @@ export type InlineDirectives = {
   execHost?: ExecHost;
   execSecurity?: ExecSecurity;
   execAsk?: ExecAsk;
-  execNode?: string;
   rawExecHost?: string;
   rawExecSecurity?: string;
   rawExecAsk?: string;
-  rawExecNode?: string;
   hasExecOptions: boolean;
   invalidExecHost: boolean;
   invalidExecSecurity: boolean;
   invalidExecAsk: boolean;
-  invalidExecNode: boolean;
   hasStatusDirective: boolean;
   hasModelDirective: boolean;
   rawModelDirective?: string;
@@ -104,16 +101,13 @@ export function parseInlineDirectives(
     execHost,
     execSecurity,
     execAsk,
-    execNode,
     rawExecHost,
     rawExecSecurity,
     rawExecAsk,
-    rawExecNode,
     hasExecOptions,
     invalidHost: invalidExecHost,
     invalidSecurity: invalidExecSecurity,
     invalidAsk: invalidExecAsk,
-    invalidNode: invalidExecNode,
     hasDirective: hasExecDirective,
   } = extractExecDirective(elevatedCleaned);
   const allowStatusDirective = options?.allowStatusDirective !== false;
@@ -161,16 +155,13 @@ export function parseInlineDirectives(
     execHost,
     execSecurity,
     execAsk,
-    execNode,
     rawExecHost,
     rawExecSecurity,
     rawExecAsk,
-    rawExecNode,
     hasExecOptions,
     invalidExecHost,
     invalidExecSecurity,
     invalidExecAsk,
-    invalidExecNode,
     hasStatusDirective,
     hasModelDirective,
     rawModelDirective: rawModel,

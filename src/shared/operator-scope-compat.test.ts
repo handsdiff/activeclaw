@@ -73,14 +73,14 @@ describe("roleScopesAllow", () => {
   it("uses strict matching for non-operator roles", () => {
     expect(
       roleScopesAllow({
-        role: "node",
+        role: "viewer",
         requestedScopes: ["system.run"],
         allowedScopes: ["operator.admin", "system.run"],
       }),
     ).toBe(true);
     expect(
       roleScopesAllow({
-        role: "node",
+        role: "viewer",
         requestedScopes: ["system.run"],
         allowedScopes: ["operator.admin"],
       }),

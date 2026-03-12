@@ -15,11 +15,11 @@ async function withTempDir<T>(run: (dir: string) => Promise<T>): Promise<T> {
 
 describe("run-node script", () => {
   it.runIf(process.platform !== "win32")(
-    "preserves control-ui assets by building with tsdown --no-clean",
+    "preserves existing dist artifacts by building with tsdown --no-clean",
     async () => {
       await withTempDir(async (tmp) => {
         const argsPath = path.join(tmp, ".pnpm-args.txt");
-        const indexPath = path.join(tmp, "dist", "control-ui", "index.html");
+        const indexPath = path.join(tmp, "dist", "sentinel", "index.html");
 
         await fs.mkdir(path.dirname(indexPath), { recursive: true });
         await fs.writeFile(indexPath, "<html>sentinel</html>\n", "utf-8");
@@ -29,7 +29,7 @@ describe("run-node script", () => {
           if (cmd === "pnpm") {
             fsSync.writeFileSync(argsPath, args.join(" "), "utf-8");
             if (!args.includes("--no-clean")) {
-              fsSync.rmSync(path.join(tmp, "dist", "control-ui"), { recursive: true, force: true });
+              fsSync.rmSync(path.join(tmp, "dist", "sentinel"), { recursive: true, force: true });
             }
           }
           if (cmd === process.execPath) {

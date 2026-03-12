@@ -2,20 +2,19 @@
 summary: "Exec approvals, allowlists, and sandbox escape prompts"
 read_when:
   - Configuring exec approvals or allowlists
-  - Implementing exec approval UX in the macOS app
   - Reviewing sandbox escape prompts and implications
 title: "Exec Approvals"
 ---
 
 # Exec approvals
 
-Exec approvals are the **companion app / node host guardrail** for letting a sandboxed agent run
-commands on a real host (`gateway` or `node`). Think of it like a safety interlock:
+Exec approvals are the **host-execution guardrail** for letting a sandboxed agent run
+commands on a real host. Think of it like a safety interlock:
 commands are allowed only when policy + allowlist + (optional) user approval all agree.
 Exec approvals are **in addition** to tool policy and elevated gating (unless elevated is set to `full`, which skips approvals).
 Effective policy is the **stricter** of `tools.exec.*` and approvals defaults; if an approvals field is omitted, the `tools.exec` value is used.
 
-If the companion app UI is **not available**, any request that requires a prompt is
+If the approval UI is **not available**, any request that requires a prompt is
 resolved by the **ask fallback** (default: deny).
 
 ## Where it applies
@@ -23,18 +22,19 @@ resolved by the **ask fallback** (default: deny).
 Exec approvals are enforced locally on the execution host:
 
 - **gateway host** → `openclaw` process on the gateway machine
-- **node host** → node runner (macOS companion app or headless node host)
 
 Trust model note:
 
 - Gateway-authenticated callers are trusted operators for that Gateway.
-- Paired nodes extend that trusted operator capability onto the node host.
 - Exec approvals reduce accidental execution risk, but are not a per-user auth boundary.
-
-macOS split:
-
-- **node host service** forwards `system.run` to the **macOS app** over local IPC.
-- **macOS app** enforces approvals + executes the command in UI context.
+- Approved node-host runs bind canonical execution context: canonical cwd, exact argv, env
+  binding when present, and pinned executable path when applicable.
+- For shell scripts and direct interpreter/runtime file invocations, OpenClaw also tries to bind
+  one concrete local file operand. If that bound file changes after approval but before execution,
+  the run is denied instead of executing drifted content.
+- This file binding is intentionally best-effort, not a complete semantic model of every
+  interpreter/runtime loader path. If approval mode cannot identify exactly one concrete local
+  file to bind, it refuses to mint an approval-backed run instead of pretending full coverage.
 
 ## Settings and storage
 
@@ -101,8 +101,7 @@ If a prompt is required but no UI is reachable, fallback decides:
 
 ## Allowlist (per agent)
 
-Allowlists are **per agent**. If multiple agents exist, switch which agent you’re
-editing in the macOS app. Patterns are **case-insensitive glob matches**.
+Allowlists are **per agent**. Patterns are **case-insensitive glob matches**.
 Patterns should resolve to **binary paths** (basename-only entries are ignored).
 Legacy `agents.default` entries are migrated to `agents.main` on load.
 
@@ -122,8 +121,7 @@ Each allowlist entry tracks:
 ## Auto-allow skill CLIs
 
 When **Auto-allow skill CLIs** is enabled, executables referenced by known skills
-are treated as allowlisted on nodes (macOS node or headless node host). This uses
-`skills.bins` over the Gateway RPC to fetch the skill bin list. Disable this if you want strict manual allowlists.
+are treated as allowlisted automatically. This uses `skills.bins` over the Gateway RPC to fetch the skill bin list. Disable this if you want strict manual allowlists.
 
 Important trust notes:
 
@@ -234,27 +232,31 @@ Custom profile example:
 
 ## Control UI editing
 
-Use the **Control UI → Nodes → Exec approvals** card to edit defaults, per‑agent
+Use the **Control UI → Exec approvals** card to edit defaults, per‑agent
 overrides, and allowlists. Pick a scope (Defaults or an agent), tweak the policy,
 add/remove allowlist patterns, then **Save**. The UI shows **last used** metadata
 per pattern so you can keep the list tidy.
 
-The target selector chooses **Gateway** (local approvals) or a **Node**. Nodes
-must advertise `system.execApprovals.get/set` (macOS app or headless node host).
-If a node does not advertise exec approvals yet, edit its local
-`~/.openclaw/exec-approvals.json` directly.
-
-CLI: `openclaw approvals` supports gateway or node editing (see [Approvals CLI](/cli/approvals)).
+CLI: `openclaw approvals` edits the same approval file (see [Approvals CLI](/cli/approvals)).
 
 ## Approval flow
 
 When a prompt is required, the gateway broadcasts `exec.approval.requested` to operator clients.
-The Control UI and macOS app resolve it via `exec.approval.resolve`, then the gateway forwards the
-approved request to the node host.
+The Control UI resolves it via `exec.approval.resolve`, then the gateway runs or rejects the request on the selected execution host.
 
-For `host=node`, approval requests include a canonical `systemRunPlan` payload. The gateway uses
-that plan as the authoritative command/cwd/session context when forwarding approved `system.run`
-requests.
+## Interpreter/runtime commands
+
+Approval-backed interpreter/runtime runs are intentionally conservative:
+
+- Exact argv/cwd/env context is always bound.
+- Direct shell script and direct runtime file forms are best-effort bound to one concrete local
+  file snapshot.
+- If OpenClaw cannot identify exactly one concrete local file for an interpreter/runtime command
+  (for example package scripts, eval forms, runtime-specific loader chains, or ambiguous multi-file
+  forms), approval-backed execution is denied instead of claiming semantic coverage it does not
+  have.
+- For those workflows, prefer sandboxing, a separate host boundary, or an explicit trusted
+  allowlist/full workflow where the operator accepts the broader runtime semantics.
 
 When approvals are required, the exec tool returns immediately with an approval id. Use that id to
 correlate later system events (`Exec finished` / `Exec denied`). If no decision arrives before the
@@ -305,6 +307,32 @@ Reply in chat:
 /approve <id> allow-always
 /approve <id> deny
 ```
+
+### Built-in chat approval clients
+
+Discord and Telegram can also act as explicit exec approval clients with channel-specific config.
+
+- Discord: `channels.discord.execApprovals.*`
+- Telegram: `channels.telegram.execApprovals.*`
+
+These clients are opt-in. If a channel does not have exec approvals enabled, OpenClaw does not treat
+that channel as an approval surface just because the conversation happened there.
+
+Shared behavior:
+
+- only configured approvers can approve or deny
+- the requester does not need to be an approver
+- when channel delivery is enabled, approval prompts include the command text
+- if no operator UI or configured approval client can accept the request, the prompt falls back to `askFallback`
+
+Telegram defaults to approver DMs (`target: "dm"`). You can switch to `channel` or `both` when you
+want approval prompts to appear in the originating Telegram chat/topic as well. For Telegram forum
+topics, OpenClaw preserves the topic for the approval prompt and the post-approval follow-up.
+
+See:
+
+- [Discord](/channels/discord#exec-approvals-in-discord)
+- [Telegram](/channels/telegram#exec-approvals-in-telegram)
 
 ### macOS IPC flow
 

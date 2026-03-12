@@ -147,6 +147,11 @@ async function withEnvVar<T>(key: string, value: string, run: () => Promise<T>):
 
 const mocks = vi.hoisted(() => ({
   loadConfig: vi.fn().mockReturnValue({ session: {} }),
+  readBestEffortConfig: vi.fn().mockResolvedValue({ session: {} }),
+  resolveCommandSecretRefsViaGateway: vi.fn(async ({ config }: { config: unknown }) => ({
+    resolvedConfig: config,
+    diagnostics: [],
+  })),
   loadSessionStore: vi.fn().mockReturnValue({
     "+1000": createDefaultSessionStoreEntry(),
   }),
@@ -347,8 +352,12 @@ vi.mock("../config/config.js", async (importOriginal) => {
   return {
     ...actual,
     loadConfig: mocks.loadConfig,
+    readBestEffortConfig: mocks.readBestEffortConfig,
   };
 });
+vi.mock("../cli/command-secret-gateway.js", () => ({
+  resolveCommandSecretRefsViaGateway: mocks.resolveCommandSecretRefsViaGateway,
+}));
 vi.mock("../daemon/service.js", () => ({
   resolveGatewayService: () => ({
     label: "LaunchAgent",
@@ -359,19 +368,6 @@ vi.mock("../daemon/service.js", () => ({
     readCommand: async () => ({
       programArguments: ["node", "dist/entry.js", "gateway"],
       sourcePath: "/tmp/Library/LaunchAgents/ai.openclaw.gateway.plist",
-    }),
-  }),
-}));
-vi.mock("../daemon/node-service.js", () => ({
-  resolveNodeService: () => ({
-    label: "LaunchAgent",
-    loadedText: "loaded",
-    notLoadedText: "not loaded",
-    isLoaded: async () => true,
-    readRuntime: async () => ({ status: "running", pid: 4321 }),
-    readCommand: async () => ({
-      programArguments: ["node", "dist/entry.js", "node-host"],
-      sourcePath: "/tmp/Library/LaunchAgents/ai.openclaw.node.plist",
     }),
   }),
 }));
@@ -393,6 +389,15 @@ describe("statusCommand", () => {
   afterEach(() => {
     mocks.loadConfig.mockReset();
     mocks.loadConfig.mockReturnValue({ session: {} });
+    mocks.readBestEffortConfig.mockReset();
+    mocks.readBestEffortConfig.mockResolvedValue({ session: {} });
+    mocks.resolveCommandSecretRefsViaGateway.mockReset();
+    mocks.resolveCommandSecretRefsViaGateway.mockImplementation(
+      async ({ config }: { config: unknown }) => ({
+        resolvedConfig: config,
+        diagnostics: [],
+      }),
+    );
   });
 
   it("prints JSON when requested", async () => {
@@ -416,7 +421,6 @@ describe("statusCommand", () => {
     expect(payload.securityAudit.summary.critical).toBe(1);
     expect(payload.securityAudit.summary.warn).toBe(1);
     expect(payload.gatewayService.label).toBe("LaunchAgent");
-    expect(payload.nodeService.label).toBe("LaunchAgent");
   });
 
   it("surfaces unknown usage when totalTokens is missing", async () => {
@@ -446,7 +450,7 @@ describe("statusCommand", () => {
       "Security audit",
       "Summary:",
       "CRITICAL",
-      "Dashboard",
+      "Gateway HTTP",
       "macos 14.0 (arm64)",
       "Memory",
       "Channels",
@@ -488,7 +492,7 @@ describe("statusCommand", () => {
   });
 
   it("warns instead of crashing when gateway auth SecretRef is unresolved for probe auth", async () => {
-    mocks.loadConfig.mockReturnValue({
+    const cfg = {
       session: {},
       gateway: {
         auth: {
@@ -501,6 +505,12 @@ describe("statusCommand", () => {
           default: { source: "env" },
         },
       },
+    };
+    mocks.loadConfig.mockReturnValue(cfg);
+    mocks.readBestEffortConfig.mockResolvedValue(cfg);
+    mocks.resolveCommandSecretRefsViaGateway.mockResolvedValue({
+      resolvedConfig: cfg,
+      diagnostics: [],
     });
 
     await statusCommand({ json: true }, runtime as never);

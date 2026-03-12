@@ -5,16 +5,13 @@ const CLEARED_EXEC_FIELDS = {
   execHost: undefined,
   execSecurity: undefined,
   execAsk: undefined,
-  execNode: undefined,
   rawExecHost: undefined,
   rawExecSecurity: undefined,
   rawExecAsk: undefined,
-  rawExecNode: undefined,
   hasExecOptions: false,
   invalidExecHost: false,
   invalidExecSecurity: false,
   invalidExecAsk: false,
-  invalidExecNode: false,
 } satisfies Partial<InlineDirectives>;
 
 export function clearInlineDirectives(cleaned: string): InlineDirectives {

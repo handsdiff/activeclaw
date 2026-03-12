@@ -51,7 +51,6 @@ import {
 } from "./audit-fs.js";
 import { collectEnabledInsecureOrDangerousFlags } from "./dangerous-config-flags.js";
 import { DEFAULT_GATEWAY_HTTP_TOOL_DENY } from "./dangerous-tools.js";
-import type { ExecFn } from "./windows-acl.js";
 
 export type SecurityAuditSeverity = "info" | "warn" | "critical";
 
@@ -102,8 +101,6 @@ export type SecurityAuditOptions = {
   plugins?: ReturnType<typeof listChannelPlugins>;
   /** Dependency injection for tests. */
   probeGatewayFn?: typeof probeGateway;
-  /** Dependency injection for tests (Windows ACL checks). */
-  execIcacls?: ExecFn;
   /** Dependency injection for tests (Docker label checks). */
   execDockerRawFn?: typeof execDockerRaw;
   /** Optional preloaded config snapshot to skip audit-time config file reads. */
@@ -123,7 +120,6 @@ type AuditExecutionContext = {
   deepTimeoutMs: number;
   stateDir: string;
   configPath: string;
-  execIcacls?: ExecFn;
   execDockerRawFn?: typeof execDockerRaw;
   probeGatewayFn?: typeof probeGateway;
   plugins?: ReturnType<typeof listChannelPlugins>;
@@ -210,14 +206,12 @@ async function collectFilesystemFindings(params: {
   configPath: string;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
-  execIcacls?: ExecFn;
 }): Promise<SecurityAuditFinding[]> {
   const findings: SecurityAuditFinding[] = [];
 
   const stateDirPerms = await inspectPathPermissions(params.stateDir, {
     env: params.env,
     platform: params.platform,
-    exec: params.execIcacls,
   });
   if (stateDirPerms.ok) {
     if (stateDirPerms.isSymlink) {
@@ -276,7 +270,6 @@ async function collectFilesystemFindings(params: {
   const configPerms = await inspectPathPermissions(params.configPath, {
     env: params.env,
     platform: params.platform,
-    exec: params.execIcacls,
   });
   if (configPerms.ok) {
     const skipReadablePermWarnings = configPerms.isSymlink;
@@ -345,7 +338,6 @@ function collectGatewayConfigFindings(
   const bind = typeof cfg.gateway?.bind === "string" ? cfg.gateway.bind : "loopback";
   const tailscaleMode = cfg.gateway?.tailscale?.mode ?? "off";
   const auth = resolveGatewayAuth({ authConfig: cfg.gateway?.auth, tailscaleMode, env });
-  const controlUiEnabled = cfg.gateway?.controlUi?.enabled !== false;
   const controlUiAllowedOrigins = (cfg.gateway?.controlUi?.allowedOrigins ?? [])
     .map((value) => value.trim())
     .filter(Boolean);
@@ -435,44 +427,42 @@ function collectGatewayConfigFindings(
     });
   }
 
-  if (bind === "loopback" && controlUiEnabled && trustedProxies.length === 0) {
+  if (bind === "loopback" && trustedProxies.length === 0) {
     findings.push({
       checkId: "gateway.trusted_proxies_missing",
       severity: "warn",
       title: "Reverse proxy headers are not trusted",
       detail:
         "gateway.bind is loopback and gateway.trustedProxies is empty. " +
-        "If you expose the Control UI through a reverse proxy, configure trusted proxies " +
+        "If you expose the gateway through a reverse proxy, configure trusted proxies " +
         "so local-client checks cannot be spoofed.",
-      remediation:
-        "Set gateway.trustedProxies to your proxy IPs or keep the Control UI local-only.",
+      remediation: "Set gateway.trustedProxies to your proxy IPs or keep the gateway local-only.",
     });
   }
 
-  if (bind === "loopback" && controlUiEnabled && !hasGatewayAuth) {
+  if (bind === "loopback" && !hasGatewayAuth) {
     findings.push({
       checkId: "gateway.loopback_no_auth",
       severity: "critical",
       title: "Gateway auth missing on loopback",
       detail:
         "gateway.bind is loopback but no gateway auth secret is configured. " +
-        "If the Control UI is exposed through a reverse proxy, unauthenticated access is possible.",
-      remediation: "Set gateway.auth (token recommended) or keep the Control UI local-only.",
+        "If the gateway is exposed through a reverse proxy, unauthenticated access is possible.",
+      remediation: "Set gateway.auth (token recommended) or keep the gateway local-only.",
     });
   }
   if (
     bind !== "loopback" &&
-    controlUiEnabled &&
     controlUiAllowedOrigins.length === 0 &&
     !dangerouslyAllowHostHeaderOriginFallback
   ) {
     findings.push({
       checkId: "gateway.control_ui.allowed_origins_required",
       severity: "critical",
-      title: "Non-loopback Control UI missing explicit allowed origins",
+      title: "Non-loopback gateway missing explicit browser allowed origins",
       detail:
-        "Control UI is enabled on a non-loopback bind but gateway.controlUi.allowedOrigins is empty. " +
-        "Strict origin policy requires explicit allowed origins for non-loopback deployments.",
+        "gateway.controlUi.allowedOrigins is empty on a non-loopback bind. " +
+        "Strict origin policy requires explicit browser origins for non-loopback deployments.",
       remediation:
         "Set gateway.controlUi.allowedOrigins to full trusted origins (for example https://control.example.com). " +
         "If your deployment intentionally relies on Host-header origin fallback, set gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback=true.",
@@ -1119,7 +1109,6 @@ async function createAuditExecutionContext(
     deepTimeoutMs,
     stateDir,
     configPath,
-    execIcacls: opts.execIcacls,
     execDockerRawFn: opts.execDockerRawFn,
     probeGatewayFn: opts.probeGatewayFn,
     plugins: opts.plugins,
@@ -1162,7 +1151,6 @@ export async function runSecurityAudit(opts: SecurityAuditOptions): Promise<Secu
         configPath,
         env,
         platform,
-        execIcacls: context.execIcacls,
       })),
     );
     if (context.configSnapshot) {
@@ -1171,7 +1159,6 @@ export async function runSecurityAudit(opts: SecurityAuditOptions): Promise<Secu
           configSnapshot: context.configSnapshot,
           env,
           platform,
-          execIcacls: context.execIcacls,
         })),
       );
     }
@@ -1181,7 +1168,6 @@ export async function runSecurityAudit(opts: SecurityAuditOptions): Promise<Secu
         env,
         stateDir,
         platform,
-        execIcacls: context.execIcacls,
       })),
     );
     findings.push(...(await collectWorkspaceSkillSymlinkEscapeFindings({ cfg })));

@@ -1,5 +1,5 @@
 ---
-summary: "How the installer scripts work (install.sh, install-cli.sh, install.ps1), flags, and automation"
+summary: "How the installer scripts work (install.sh, install-cli.sh), flags, and automation"
 read_when:
   - You want to understand `openclaw.ai/install.sh`
   - You want to automate installs (CI / headless)
@@ -9,13 +9,12 @@ title: "Installer Internals"
 
 # Installer internals
 
-OpenClaw ships three installer scripts, served from `openclaw.ai`.
+OpenClaw ships two installer scripts, served from `openclaw.ai`.
 
-| Script                             | Platform             | What it does                                                                                 |
-| ---------------------------------- | -------------------- | -------------------------------------------------------------------------------------------- |
-| [`install.sh`](#installsh)         | macOS / Linux / WSL  | Installs Node if needed, installs OpenClaw via npm (default) or git, and can run onboarding. |
-| [`install-cli.sh`](#install-clish) | macOS / Linux / WSL  | Installs Node + OpenClaw into a local prefix (`~/.openclaw`). No root required.              |
-| [`install.ps1`](#installps1)       | Windows (PowerShell) | Installs Node if needed, installs OpenClaw via npm (default) or git, and can run onboarding. |
+| Script                             | Platform      | What it does                                                                                 |
+| ---------------------------------- | ------------- | -------------------------------------------------------------------------------------------- |
+| [`install.sh`](#installsh)         | macOS / Linux | Installs Node if needed, installs OpenClaw via npm (default) or git, and can run onboarding. |
+| [`install-cli.sh`](#install-clish) | macOS / Linux | Installs Node + OpenClaw into a local prefix (`~/.openclaw`). No root required.              |
 
 ## Quick commands
 
@@ -40,16 +39,6 @@ OpenClaw ships three installer scripts, served from `openclaw.ai`.
     ```
 
   </Tab>
-  <Tab title="install.ps1">
-    ```powershell
-    iwr -useb https://openclaw.ai/install.ps1 | iex
-    ```
-
-    ```powershell
-    & ([scriptblock]::Create((iwr -useb https://openclaw.ai/install.ps1))) -Tag beta -NoOnboard -DryRun
-    ```
-
-  </Tab>
 </Tabs>
 
 <Note>
@@ -61,14 +50,14 @@ If install succeeds but `openclaw` is not found in a new terminal, see [Node.js 
 ## install.sh
 
 <Tip>
-Recommended for most interactive installs on macOS/Linux/WSL.
+Recommended for most interactive installs on macOS/Linux.
 </Tip>
 
 ### Flow (install.sh)
 
 <Steps>
   <Step title="Detect OS">
-    Supports macOS and Linux (including WSL). If macOS is detected, installs Homebrew if missing.
+    Supports macOS and Linux. If macOS is detected, installs Homebrew if missing.
   </Step>
   <Step title="Ensure Node.js 22+">
     Checks Node version and installs Node 22 if needed (Homebrew on macOS, NodeSource setup scripts on Linux apt/dnf/yum).
@@ -241,94 +230,6 @@ Designed for environments where you want everything under a local prefix (defaul
   </Accordion>
 </AccordionGroup>
 
----
-
-## install.ps1
-
-### Flow (install.ps1)
-
-<Steps>
-  <Step title="Ensure PowerShell + Windows environment">
-    Requires PowerShell 5+.
-  </Step>
-  <Step title="Ensure Node.js 22+">
-    If missing, attempts install via winget, then Chocolatey, then Scoop.
-  </Step>
-  <Step title="Install OpenClaw">
-    - `npm` method (default): global npm install using selected `-Tag`
-    - `git` method: clone/update repo, install/build with pnpm, and install wrapper at `%USERPROFILE%\.local\bin\openclaw.cmd`
-  </Step>
-  <Step title="Post-install tasks">
-    Adds needed bin directory to user PATH when possible, then runs `openclaw doctor --non-interactive` on upgrades and git installs (best effort).
-  </Step>
-</Steps>
-
-### Examples (install.ps1)
-
-<Tabs>
-  <Tab title="Default">
-    ```powershell
-    iwr -useb https://openclaw.ai/install.ps1 | iex
-    ```
-  </Tab>
-  <Tab title="Git install">
-    ```powershell
-    & ([scriptblock]::Create((iwr -useb https://openclaw.ai/install.ps1))) -InstallMethod git
-    ```
-  </Tab>
-  <Tab title="Custom git directory">
-    ```powershell
-    & ([scriptblock]::Create((iwr -useb https://openclaw.ai/install.ps1))) -InstallMethod git -GitDir "C:\openclaw"
-    ```
-  </Tab>
-  <Tab title="Dry run">
-    ```powershell
-    & ([scriptblock]::Create((iwr -useb https://openclaw.ai/install.ps1))) -DryRun
-    ```
-  </Tab>
-  <Tab title="Debug trace">
-    ```powershell
-    # install.ps1 has no dedicated -Verbose flag yet.
-    Set-PSDebug -Trace 1
-    & ([scriptblock]::Create((iwr -useb https://openclaw.ai/install.ps1))) -NoOnboard
-    Set-PSDebug -Trace 0
-    ```
-  </Tab>
-</Tabs>
-
-<AccordionGroup>
-  <Accordion title="Flags reference">
-
-| Flag                      | Description                                            |
-| ------------------------- | ------------------------------------------------------ |
-| `-InstallMethod npm\|git` | Install method (default: `npm`)                        |
-| `-Tag <tag>`              | npm dist-tag (default: `latest`)                       |
-| `-GitDir <path>`          | Checkout directory (default: `%USERPROFILE%\openclaw`) |
-| `-NoOnboard`              | Skip onboarding                                        |
-| `-NoGitUpdate`            | Skip `git pull`                                        |
-| `-DryRun`                 | Print actions only                                     |
-
-  </Accordion>
-
-  <Accordion title="Environment variables reference">
-
-| Variable                           | Description        |
-| ---------------------------------- | ------------------ |
-| `OPENCLAW_INSTALL_METHOD=git\|npm` | Install method     |
-| `OPENCLAW_GIT_DIR=<path>`          | Checkout directory |
-| `OPENCLAW_NO_ONBOARD=1`            | Skip onboarding    |
-| `OPENCLAW_GIT_UPDATE=0`            | Disable git pull   |
-| `OPENCLAW_DRY_RUN=1`               | Dry run mode       |
-
-  </Accordion>
-</AccordionGroup>
-
-<Note>
-If `-InstallMethod git` is used and Git is missing, the script exits and prints the Git for Windows link.
-</Note>
-
----
-
 ## CI and automation
 
 Use non-interactive flags/env vars for predictable runs.
@@ -348,11 +249,6 @@ Use non-interactive flags/env vars for predictable runs.
   <Tab title="install-cli.sh (JSON)">
     ```bash
     curl -fsSL --proto '=https' --tlsv1.2 https://openclaw.ai/install-cli.sh | bash -s -- --json --prefix /opt/openclaw
-    ```
-  </Tab>
-  <Tab title="install.ps1 (skip onboarding)">
-    ```powershell
-    & ([scriptblock]::Create((iwr -useb https://openclaw.ai/install.ps1))) -NoOnboard
     ```
   </Tab>
 </Tabs>
@@ -375,26 +271,6 @@ Use non-interactive flags/env vars for predictable runs.
 
     ```bash
     SHARP_IGNORE_GLOBAL_LIBVIPS=0 curl -fsSL --proto '=https' --tlsv1.2 https://openclaw.ai/install.sh | bash
-    ```
-
-  </Accordion>
-
-  <Accordion title='Windows: "npm error spawn git / ENOENT"'>
-    Install Git for Windows, reopen PowerShell, rerun installer.
-  </Accordion>
-
-  <Accordion title='Windows: "openclaw is not recognized"'>
-    Run `npm config get prefix` and add that directory to your user PATH (no `\bin` suffix needed on Windows), then reopen PowerShell.
-  </Accordion>
-
-  <Accordion title="Windows: how to get verbose installer output">
-    `install.ps1` does not currently expose a `-Verbose` switch.
-    Use PowerShell tracing for script-level diagnostics:
-
-    ```powershell
-    Set-PSDebug -Trace 1
-    & ([scriptblock]::Create((iwr -useb https://openclaw.ai/install.ps1))) -NoOnboard
-    Set-PSDebug -Trace 0
     ```
 
   </Accordion>

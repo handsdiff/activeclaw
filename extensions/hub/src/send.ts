@@ -1,4 +1,4 @@
-import { fetchWithSsrFGuard } from "openclaw/plugin-sdk";
+import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/compat";
 import { resolveHubAccount } from "./accounts.js";
 import { getHubRuntime } from "./runtime.js";
 import { normalizeHubTarget } from "./targets.js";

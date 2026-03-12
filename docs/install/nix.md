@@ -36,7 +36,7 @@ Reference the nix-openclaw README for module options.
 
 ## What you get
 
-- Gateway + macOS app + tools (whisper, spotify, cameras) — all pinned
+- Gateway + tools (whisper, spotify, cameras) — all pinned
 - Launchd service that survives reboots
 - Plugin system with declarative config
 - Instant rollback: `home-manager switch --rollback`
@@ -52,13 +52,6 @@ Enable it by exporting:
 
 ```bash
 OPENCLAW_NIX_MODE=1
-```
-
-On macOS, the GUI app does not automatically inherit shell env vars. You can
-also enable Nix mode via defaults:
-
-```bash
-defaults write ai.openclaw.mac openclaw.nixMode -bool true
 ```
 
 ### Config + state paths
@@ -78,18 +71,6 @@ stay out of the immutable store.
 - Auto-install and self-mutation flows are disabled
 - Missing dependencies surface Nix-specific remediation messages
 - UI surfaces a read-only Nix mode banner when present
-
-## Packaging note (macOS)
-
-The macOS packaging flow expects a stable Info.plist template at:
-
-```
-apps/macos/Sources/OpenClaw/Resources/Info.plist
-```
-
-[`scripts/package-mac-app.sh`](https://github.com/openclaw/openclaw/blob/main/scripts/package-mac-app.sh) copies this template into the app bundle and patches dynamic fields
-(bundle ID, version/build, Git SHA, Sparkle keys). This keeps the plist deterministic for SwiftPM
-packaging and Nix builds (which do not rely on a full Xcode toolchain).
 
 ## Related
 

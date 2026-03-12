@@ -16,14 +16,13 @@ import {
 } from "../memory/status-format.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { runSecurityAudit } from "../security/audit.js";
-import { renderTable } from "../terminal/table.js";
+import { getTerminalTableWidth, renderTable } from "../terminal/table.js";
 import { theme } from "../terminal/theme.js";
 import { formatHealthChannelLines, type HealthSummary } from "./health.js";
-import { resolveControlUiLinks } from "./onboard-helpers.js";
 import { statusAllCommand } from "./status-all.js";
 import { groupChannelIssuesByChannel } from "./status-all/channel-issues.js";
 import { formatGatewayAuthUsed } from "./status-all/format.js";
-import { getDaemonStatusSummary, getNodeDaemonStatusSummary } from "./status.daemon.js";
+import { getDaemonStatusSummary } from "./status.daemon.js";
 import {
   formatDuration,
   formatKTokens,
@@ -153,6 +152,7 @@ export async function statusCommand(
             method: "health",
             params: { probe: true },
             timeoutMs: opts.timeoutMs,
+            config: scan.cfg,
           }),
       )
     : undefined;
@@ -162,6 +162,7 @@ export async function statusCommand(
           method: "last-heartbeat",
           params: {},
           timeoutMs: opts.timeoutMs,
+          config: scan.cfg,
         }).catch(() => null)
       : null;
 
@@ -174,10 +175,7 @@ export async function statusCommand(
   });
 
   if (opts.json) {
-    const [daemon, nodeDaemon] = await Promise.all([
-      getDaemonStatusSummary(),
-      getNodeDaemonStatusSummary(),
-    ]);
+    const daemon = await getDaemonStatusSummary();
     runtime.log(
       JSON.stringify(
         {
@@ -200,7 +198,6 @@ export async function statusCommand(
             authWarning: gatewayProbeAuthWarning ?? null,
           },
           gatewayService: daemon,
-          nodeService: nodeDaemon,
           agents: agentStatus,
           securityAudit,
           secretDiagnostics,
@@ -219,7 +216,7 @@ export async function statusCommand(
   const warn = (value: string) => (rich ? theme.warn(value) : value);
 
   if (opts.verbose) {
-    const details = buildGatewayConnectionDetails();
+    const details = buildGatewayConnectionDetails({ config: scan.cfg });
     runtime.log(info("Gateway connection:"));
     for (const line of details.message.split("\n")) {
       runtime.log(`  ${line}`);
@@ -227,7 +224,7 @@ export async function statusCommand(
     runtime.log("");
   }
 
-  const tableWidth = Math.max(60, (process.stdout.columns ?? 120) - 1);
+  const tableWidth = getTerminalTableWidth();
 
   if (secretDiagnostics.length > 0) {
     runtime.log(theme.warn("Secret diagnostics:"));
@@ -237,19 +234,7 @@ export async function statusCommand(
     runtime.log("");
   }
 
-  const dashboard = (() => {
-    const controlUiEnabled = cfg.gateway?.controlUi?.enabled ?? true;
-    if (!controlUiEnabled) {
-      return "disabled";
-    }
-    const links = resolveControlUiLinks({
-      port: resolveGatewayPort(cfg),
-      bind: cfg.gateway?.bind,
-      customBindHost: cfg.gateway?.customBindHost,
-      basePath: cfg.gateway?.controlUi?.basePath,
-    });
-    return links.httpUrl;
-  })();
+  const gatewayHttpUrl = `http://127.0.0.1:${resolveGatewayPort(cfg)}/`;
 
   const gatewayValue = (() => {
     const target = remoteUrlMissing
@@ -294,25 +279,14 @@ export async function statusCommand(
     return `${agentStatus.agents.length} · ${pending} · sessions ${agentStatus.totalSessions}${defSuffix}`;
   })();
 
-  const [daemon, nodeDaemon] = await Promise.all([
-    getDaemonStatusSummary(),
-    getNodeDaemonStatusSummary(),
-  ]);
+  const daemon = await getDaemonStatusSummary();
   const daemonValue = (() => {
     if (daemon.installed === false) {
       return `${daemon.label} not installed`;
     }
-    const installedPrefix = daemon.installed === true ? "installed · " : "";
+    const installedPrefix = daemon.managedByOpenClaw ? "installed · " : "";
     return `${daemon.label} ${installedPrefix}${daemon.loadedText}${daemon.runtimeShort ? ` · ${daemon.runtimeShort}` : ""}`;
   })();
-  const nodeDaemonValue = (() => {
-    if (nodeDaemon.installed === false) {
-      return `${nodeDaemon.label} not installed`;
-    }
-    const installedPrefix = nodeDaemon.installed === true ? "installed · " : "";
-    return `${nodeDaemon.label} ${installedPrefix}${nodeDaemon.loadedText}${nodeDaemon.runtimeShort ? ` · ${nodeDaemon.runtimeShort}` : ""}`;
-  })();
-
   const defaults = summary.sessions.defaults;
   const defaultCtx = defaults.contextTokens
     ? ` (${formatKTokens(defaults.contextTokens)} ctx)`
@@ -405,7 +379,7 @@ export async function statusCommand(
   const gitLabel = formatGitInstallLabel(update);
 
   const overviewRows = [
-    { Item: "Dashboard", Value: dashboard },
+    { Item: "Gateway HTTP", Value: gatewayHttpUrl },
     { Item: "OS", Value: `${osSummary.label} · node ${process.versions.node}` },
     {
       Item: "Tailscale",
@@ -427,7 +401,6 @@ export async function statusCommand(
       ? [{ Item: "Gateway auth warning", Value: warn(gatewayProbeAuthWarning) }]
       : []),
     { Item: "Gateway service", Value: daemonValue },
-    { Item: "Node service", Value: nodeDaemonValue },
     { Item: "Agents", Value: agentsValue },
     { Item: "Memory", Value: memoryValue },
     { Item: "Probes", Value: probesValue },

@@ -3,41 +3,16 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import { getMemorySearchManager, type MemoryIndexManager } from "./index.js";
 import {
-  evictAllMemoryIndexManagers,
-  getMemorySearchManager,
-  type MemoryIndexManager,
-} from "./index.js";
+  closeAllMemoryIndexManagers,
+  MemoryIndexManager as RawMemoryIndexManager,
+} from "./manager.js";
+import "./test-runtime-mocks.js";
 
 const hoisted = vi.hoisted(() => ({
   providerCreateCalls: 0,
   providerDelayMs: 0,
-  watcherCloseDelayMs: 0,
-}));
-
-vi.mock("chokidar", () => ({
-  default: {
-    watch: () => ({
-      on: vi.fn(),
-      close: vi.fn(async () => {
-        if (hoisted.watcherCloseDelayMs > 0) {
-          await new Promise((resolve) => setTimeout(resolve, hoisted.watcherCloseDelayMs));
-        }
-      }),
-    }),
-  },
-  watch: () => ({
-    on: vi.fn(),
-    close: vi.fn(async () => {
-      if (hoisted.watcherCloseDelayMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, hoisted.watcherCloseDelayMs));
-      }
-    }),
-  }),
-}));
-
-vi.mock("./sqlite-vec.js", () => ({
-  loadSqliteVecExtension: async () => ({ ok: false, error: "sqlite-vec disabled in tests" }),
 }));
 
 vi.mock("./embeddings.js", () => ({
@@ -68,11 +43,9 @@ describe("memory manager cache hydration", () => {
     await fs.writeFile(path.join(workspaceDir, "MEMORY.md"), "Hello memory.");
     hoisted.providerCreateCalls = 0;
     hoisted.providerDelayMs = 50;
-    hoisted.watcherCloseDelayMs = 0;
   });
 
   afterEach(async () => {
-    await evictAllMemoryIndexManagers();
     await fs.rm(workspaceDir, { recursive: true, force: true });
   });
 
@@ -110,44 +83,7 @@ describe("memory manager cache hydration", () => {
     await managers[0].close();
   });
 
-  it("keeps a rebuilt manager cached while the evicted instance is still closing", async () => {
-    const indexPath = path.join(workspaceDir, "index.sqlite");
-    const cfg = {
-      agents: {
-        defaults: {
-          workspace: workspaceDir,
-          memorySearch: {
-            provider: "openai",
-            model: "mock-embed",
-            store: { path: indexPath, vector: { enabled: false } },
-            sync: { watch: true, onSessionStart: false, onSearch: false },
-          },
-        },
-        list: [{ id: "main", default: true }],
-      },
-    } as OpenClawConfig;
-
-    const first = await getMemorySearchManager({ cfg, agentId: "main" });
-    expect(first.manager).not.toBeNull();
-
-    hoisted.providerDelayMs = 0;
-    hoisted.watcherCloseDelayMs = 50;
-
-    const eviction = evictAllMemoryIndexManagers();
-    const second = await getMemorySearchManager({ cfg, agentId: "main" });
-    expect(second.manager).not.toBeNull();
-
-    await eviction;
-
-    const third = await getMemorySearchManager({ cfg, agentId: "main" });
-    expect(third.manager).not.toBeNull();
-    expect(Object.is(third.manager, second.manager)).toBe(true);
-    expect(hoisted.providerCreateCalls).toBe(2);
-
-    await third.manager?.close?.();
-  });
-
-  it("hands off an invalidated in-flight creation to the rebuilt manager", async () => {
+  it("drains in-flight manager creation during global teardown", async () => {
     const indexPath = path.join(workspaceDir, "index.sqlite");
     const cfg = {
       agents: {
@@ -164,21 +100,19 @@ describe("memory manager cache hydration", () => {
       },
     } as OpenClawConfig;
 
-    hoisted.providerDelayMs = 50;
-    const firstPromise = getMemorySearchManager({ cfg, agentId: "main" });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    hoisted.providerDelayMs = 100;
 
-    await evictAllMemoryIndexManagers();
+    const pendingResult = RawMemoryIndexManager.get({ cfg, agentId: "main" });
+    await closeAllMemoryIndexManagers();
+    const firstManager = await pendingResult;
 
-    hoisted.providerDelayMs = 0;
-    const second = await getMemorySearchManager({ cfg, agentId: "main" });
-    const first = await firstPromise;
+    const secondManager = await RawMemoryIndexManager.get({ cfg, agentId: "main" });
 
-    expect(first.manager).not.toBeNull();
-    expect(second.manager).not.toBeNull();
-    expect(first.manager).toBe(second.manager);
+    expect(firstManager).toBeTruthy();
+    expect(secondManager).toBeTruthy();
+    expect(Object.is(secondManager, firstManager)).toBe(false);
     expect(hoisted.providerCreateCalls).toBe(2);
 
-    await second.manager?.close?.();
+    await secondManager?.close?.();
   });
 });

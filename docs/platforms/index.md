@@ -1,5 +1,5 @@
 ---
-summary: "Platform support overview (Gateway + companion apps)"
+summary: "Platform support overview for the Gateway runtime"
 read_when:
   - Looking for OS support or install paths
   - Deciding where to run the Gateway
@@ -11,17 +11,12 @@ title: "Platforms"
 OpenClaw core is written in TypeScript. **Node is the recommended runtime**.
 Bun is not recommended for the Gateway (WhatsApp/Telegram bugs).
 
-Companion apps exist for macOS (menu bar app) and mobile nodes (iOS/Android). Windows and
-Linux companion apps are planned, but the Gateway is fully supported today.
-Native companion apps for Windows are also planned; the Gateway is recommended via WSL2.
+OpenClaw Gateway runs on macOS and Linux.
 
-## Choose your OS
+## Local hosts
 
-- macOS: [macOS](/platforms/macos)
-- iOS: [iOS](/platforms/ios)
-- Android: [Android](/platforms/android)
-- Windows: [Windows](/platforms/windows)
 - Linux: [Linux](/platforms/linux)
+- macOS: use [Install](/install) and the [Gateway runbook](/gateway)
 
 ## VPS & hosting
 
@@ -50,4 +45,4 @@ Use one of these (all supported):
 The service target depends on OS:
 
 - macOS: LaunchAgent (`ai.openclaw.gateway` or `ai.openclaw.<profile>`; legacy `com.openclaw.*`)
-- Linux/WSL2: systemd user service (`openclaw-gateway[-<profile>].service`)
+- Linux: systemd user service (`openclaw-gateway[-<profile>].service`)

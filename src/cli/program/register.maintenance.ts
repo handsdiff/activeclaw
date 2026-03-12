@@ -1,5 +1,4 @@
 import type { Command } from "commander";
-import { dashboardCommand } from "../../commands/dashboard.js";
 import { doctorCommand } from "../../commands/doctor.js";
 import { resetCommand } from "../../commands/reset.js";
 import { uninstallCommand } from "../../commands/uninstall.js";
@@ -41,23 +40,6 @@ export function registerMaintenanceCommands(program: Command) {
     });
 
   program
-    .command("dashboard")
-    .description("Open the Control UI with your current token")
-    .addHelpText(
-      "after",
-      () =>
-        `\n${theme.muted("Docs:")} ${formatDocsLink("/cli/dashboard", "docs.openclaw.ai/cli/dashboard")}\n`,
-    )
-    .option("--no-open", "Print URL but do not launch a browser")
-    .action(async (opts) => {
-      await runCommandWithRuntime(defaultRuntime, async () => {
-        await dashboardCommand(defaultRuntime, {
-          noOpen: opts.open === false,
-        });
-      });
-    });
-
-  program
     .command("reset")
     .description("Reset local config/state (keeps the CLI installed)")
     .addHelpText(
@@ -91,8 +73,7 @@ export function registerMaintenanceCommands(program: Command) {
     .option("--service", "Remove the gateway service", false)
     .option("--state", "Remove state + config", false)
     .option("--workspace", "Remove workspace dirs", false)
-    .option("--app", "Remove the macOS app", false)
-    .option("--all", "Remove service + state + workspace + app", false)
+    .option("--all", "Remove service + state + workspace", false)
     .option("--yes", "Skip confirmation prompts", false)
     .option("--non-interactive", "Disable prompts (requires --yes)", false)
     .option("--dry-run", "Print actions without removing files", false)
@@ -102,7 +83,6 @@ export function registerMaintenanceCommands(program: Command) {
           service: Boolean(opts.service),
           state: Boolean(opts.state),
           workspace: Boolean(opts.workspace),
-          app: Boolean(opts.app),
           all: Boolean(opts.all),
           yes: Boolean(opts.yes),
           nonInteractive: Boolean(opts.nonInteractive),

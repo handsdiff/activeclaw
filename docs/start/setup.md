@@ -18,8 +18,8 @@ Last updated: 2026-01-01
 ## TL;DR
 
 - **Tailoring lives outside the repo:** `~/.openclaw/workspace` (workspace) + `~/.openclaw/openclaw.json` (config).
-- **Stable workflow:** install the macOS app; let it run the bundled Gateway.
-- **Bleeding edge workflow:** run the Gateway yourself via `pnpm gateway:watch`, then let the macOS app attach in Local mode.
+- **Recommended workflow:** install the CLI, run `openclaw onboard --install-daemon`, and manage the Gateway as a CLI-installed service.
+- **Development workflow:** run the Gateway yourself via `pnpm gateway:watch`.
 
 ## Prereqs (from source)
 
@@ -56,38 +56,33 @@ After `pnpm build`, you can run the packaged CLI directly:
 node openclaw.mjs gateway --port 18789 --verbose
 ```
 
-## Stable workflow (macOS app first)
+## Recommended workflow (CLI-managed gateway)
 
-1. Install + launch **OpenClaw.app** (menu bar).
-2. Complete the onboarding/permissions checklist (TCC prompts).
-3. Ensure Gateway is **Local** and running (the app manages it).
-4. Link surfaces (example: WhatsApp):
+1. Install the CLI and run onboarding:
+
+```bash
+openclaw onboard --install-daemon
+```
+
+2. Link surfaces (example: WhatsApp):
 
 ```bash
 openclaw channels login
 ```
 
-5. Sanity check:
+3. Sanity check:
 
 ```bash
 openclaw health
 ```
 
-If onboarding is not available in your build:
+If you prefer manual setup:
 
 - Run `openclaw setup`, then `openclaw channels login`, then start the Gateway manually (`openclaw gateway`).
 
-## Bleeding edge workflow (Gateway in a terminal)
+## Development workflow (Gateway in a terminal)
 
-Goal: work on the TypeScript Gateway, get hot reload, keep the macOS app UI attached.
-
-### 0) (Optional) Run the macOS app from source too
-
-If you also want the macOS app on the bleeding edge:
-
-```bash
-./scripts/restart-mac.sh
-```
+Goal: work on the TypeScript Gateway and get hot reload.
 
 ### 1) Start the dev Gateway
 
@@ -98,17 +93,9 @@ pnpm gateway:watch
 
 `gateway:watch` runs the gateway in watch mode and reloads on TypeScript changes.
 
-### 2) Point the macOS app at your running Gateway
+### 2) Verify
 
-In **OpenClaw.app**:
-
-- Connection Mode: **Local**
-  The app will attach to the running gateway on the configured port.
-
-### 3) Verify
-
-- In-app Gateway status should read **“Using existing gateway …”**
-- Or via CLI:
+- Via CLI:
 
 ```bash
 openclaw health
@@ -116,7 +103,7 @@ openclaw health
 
 ### Common footguns
 
-- **Wrong port:** Gateway WS defaults to `ws://127.0.0.1:18789`; keep app + CLI on the same port.
+- **Wrong port:** Gateway WS defaults to `ws://127.0.0.1:18789`; keep your CLI and browser UI on the same port.
 - **Where state lives:**
   - Credentials: `~/.openclaw/credentials/`
   - Sessions: `~/.openclaw/agents/<agentId>/sessions/`
@@ -127,7 +114,7 @@ openclaw health
 Use this when debugging auth or deciding what to back up:
 
 - **WhatsApp**: `~/.openclaw/credentials/whatsapp/<accountId>/creds.json`
-- **Telegram bot token**: config/env or `channels.telegram.tokenFile`
+- **Telegram bot token**: config/env or `channels.telegram.tokenFile` (regular file only; symlinks rejected)
 - **Discord bot token**: config/env or SecretRef (env/file/exec providers)
 - **Slack tokens**: config/env (`channels.slack.*`)
 - **Pairing allowlists**:
@@ -162,4 +149,3 @@ user service (no lingering needed). See [Gateway runbook](/gateway) for the syst
 - [Gateway configuration](/gateway/configuration) (config schema + examples)
 - [Discord](/channels/discord) and [Telegram](/channels/telegram) (reply tags + replyToMode settings)
 - [OpenClaw assistant setup](/start/openclaw)
-- [macOS app](/platforms/macos) (gateway lifecycle)

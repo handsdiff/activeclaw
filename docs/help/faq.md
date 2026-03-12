@@ -583,8 +583,8 @@ Two common Windows issues:
 - Add that directory to your user PATH (no `\bin` suffix needed on Windows; on most systems it is `%AppData%\npm`).
 - Close and reopen PowerShell after updating PATH.
 
-If you want the smoothest Windows setup, use **WSL2** instead of native Windows.
-Docs: [Windows](/platforms/windows).
+Use a Linux host or VM for the smoothest setup.
+Docs: [Linux](/platforms/linux), [VPS hosting](/vps).
 
 ### Windows exec output shows garbled Chinese text what should I do
 
@@ -693,7 +693,7 @@ Docs: [Update](/cli/update), [Updating](/install/updating).
 - **Workspace** location + bootstrap files
 - **Gateway settings** (bind/port/auth/tailscale)
 - **Providers** (WhatsApp, Telegram, Discord, Mattermost (plugin), Signal, iMessage)
-- **Daemon install** (LaunchAgent on macOS; systemd user unit on Linux/WSL2)
+- **Daemon install** (LaunchAgent on macOS; systemd user unit on Linux)
 - **Health checks** and **skills** selection
 
 It also warns if your configured model is unknown or missing auth.
@@ -798,12 +798,12 @@ Pick region-pinned endpoints. OpenRouter exposes US-hosted options for MiniMax, 
 
 ### Do I have to buy a Mac Mini to install this
 
-No. OpenClaw runs on macOS or Linux (Windows via WSL2). A Mac mini is optional - some people
+No. OpenClaw runs on macOS or Linux. A Mac mini is optional - some people
 buy one as an always-on host, but a small VPS, home server, or Raspberry Pi-class box works too.
 
 You only need a Mac **for macOS-only tools**. For iMessage, use [BlueBubbles](/channels/bluebubbles) (recommended) - the BlueBubbles server runs on any Mac, and the Gateway can run on Linux or elsewhere. If you want other macOS-only tools, run the Gateway on a Mac or pair a macOS node.
 
-Docs: [BlueBubbles](/channels/bluebubbles), [Nodes](/nodes), [Mac remote mode](/platforms/mac/remote).
+Docs: [BlueBubbles](/channels/bluebubbles), [Nodes](/nodes), [Gateway remote access](/gateway/remote).
 
 ### Do I need a Mac mini for iMessage support
 
@@ -816,7 +816,7 @@ Common setups:
 - Run everything on the Mac if you want the simplest single‑machine setup.
 
 Docs: [BlueBubbles](/channels/bluebubbles), [Nodes](/nodes),
-[Mac remote mode](/platforms/mac/remote).
+[Gateway remote access](/gateway/remote).
 
 ### If I buy a Mac mini to run OpenClaw can I connect it to my MacBook Pro
 
@@ -971,9 +971,8 @@ Baseline guidance:
 - **Recommended:** 2GB RAM or more if you run multiple channels, browser automation, or media tools.
 - **OS:** Ubuntu LTS or another modern Debian/Ubuntu.
 
-If you are on Windows, **WSL2 is the easiest VM style setup** and has the best tooling
-compatibility. See [Windows](/platforms/windows), [VPS hosting](/vps).
-If you are running macOS in a VM, see [macOS VM](/install/macos-vm).
+If you are on Windows, use a Linux VM or remote Linux host for the best tooling
+compatibility. See [Linux](/platforms/linux), [VPS hosting](/vps).
 
 ## What is OpenClaw?
 
@@ -1452,7 +1451,8 @@ Non-loopback binds **require auth**. Configure `gateway.auth.mode` + `gateway.au
 Notes:
 
 - `gateway.remote.token` / `.password` do **not** enable local gateway auth by themselves.
-- Local call paths can use `gateway.remote.*` as fallback when `gateway.auth.*` is unset.
+- Local call paths can use `gateway.remote.*` as fallback only when `gateway.auth.*` is unset.
+- If `gateway.auth.token` / `gateway.auth.password` is explicitly configured via SecretRef and unresolved, resolution fails closed (no remote fallback masking).
 - The Control UI authenticates via `connect.params.auth.token` (stored in app/UI settings). Avoid putting tokens in URLs.
 
 ### Why do I need a token on localhost now
@@ -1489,10 +1489,16 @@ Set `cli.banner.taglineMode` in config:
 
 ### How do I enable web search and web fetch
 
-`web_fetch` works without an API key. `web_search` requires a Brave Search API
-key. **Recommended:** run `openclaw configure --section web` to store it in
-`tools.web.search.apiKey`. Environment alternative: set `BRAVE_API_KEY` for the
-Gateway process.
+`web_fetch` works without an API key. `web_search` requires a key for your
+selected provider (Brave, Gemini, Grok, Kimi, or Perplexity).
+**Recommended:** run `openclaw configure --section web` and choose a provider.
+Environment alternatives:
+
+- Brave: `BRAVE_API_KEY`
+- Gemini: `GEMINI_API_KEY`
+- Grok: `XAI_API_KEY`
+- Kimi: `KIMI_API_KEY` or `MOONSHOT_API_KEY`
+- Perplexity: `PERPLEXITY_API_KEY` or `OPENROUTER_API_KEY`
 
 ```json5
 {
@@ -1500,6 +1506,7 @@ Gateway process.
     web: {
       search: {
         enabled: true,
+        provider: "brave",
         apiKey: "BRAVE_API_KEY_HERE",
         maxResults: 5,
       },
@@ -1594,7 +1601,7 @@ No separate TCP bridge is required; nodes connect over the Gateway WebSocket.
 Security reminder: pairing a macOS node allows `system.run` on that machine. Only
 pair devices you trust, and review [Security](/gateway/security).
 
-Docs: [Nodes](/nodes), [Gateway protocol](/gateway/protocol), [macOS remote mode](/platforms/mac/remote), [Security](/gateway/security).
+Docs: [Nodes](/nodes), [Gateway protocol](/gateway/protocol), [Gateway remote access](/gateway/remote), [Security](/gateway/security).
 
 ### Tailscale is connected but I get no replies What now
 
@@ -1649,7 +1656,7 @@ use multiple agents or sub-agents.
 ### Is there a benefit to using a node on my personal laptop instead of SSH from a VPS
 
 Yes - nodes are the first-class way to reach your laptop from a remote Gateway, and they
-unlock more than shell access. The Gateway runs on macOS/Linux (Windows via WSL2) and is
+unlock more than shell access. The Gateway runs on macOS/Linux and is
 lightweight (a small VPS or Raspberry Pi-class box is fine; 4 GB RAM is plenty), so a common
 setup is an always-on host plus your laptop as a node.
 
@@ -1759,7 +1766,7 @@ Recommended setup:
    openclaw devices approve <requestId>
    ```
 
-Docs: [Gateway protocol](/gateway/protocol), [Discovery](/gateway/discovery), [macOS remote mode](/platforms/mac/remote).
+Docs: [Gateway protocol](/gateway/protocol), [Discovery](/gateway/discovery), [Gateway remote access](/gateway/remote).
 
 ## Env vars and .env loading
 
@@ -2186,7 +2193,7 @@ Fix checklist:
 2. Make sure MiniMax is configured (wizard or JSON), or that a MiniMax API key
    exists in env/auth profiles so the provider can be injected.
 3. Use the exact model id (case-sensitive): `minimax/MiniMax-M2.5` or
-   `minimax/MiniMax-M2.5-highspeed` (legacy: `minimax/MiniMax-M2.5-Lightning`).
+   `minimax/MiniMax-M2.5-highspeed`.
 4. Run:
 
    ```bash
@@ -2238,11 +2245,12 @@ Docs: [Models](/concepts/models), [Multi-Agent Routing](/concepts/multi-agent), 
 Yes. OpenClaw ships a few default shorthands (only applied when the model exists in `agents.defaults.models`):
 
 - `opus` → `anthropic/claude-opus-4-6`
-- `sonnet` → `anthropic/claude-sonnet-4-5`
-- `gpt` → `openai/gpt-5.2`
+- `sonnet` → `anthropic/claude-sonnet-4-6`
+- `gpt` → `openai/gpt-5.4`
 - `gpt-mini` → `openai/gpt-5-mini`
-- `gemini` → `google/gemini-3-pro-preview`
+- `gemini` → `google/gemini-3.1-pro-preview`
 - `gemini-flash` → `google/gemini-3-flash-preview`
+- `gemini-flash-lite` → `google/gemini-3.1-flash-lite-preview`
 
 If you set your own alias with the same name, your value wins.
 
@@ -2449,7 +2457,7 @@ Precedence:
 
 ### Why does openclaw gateway status say Runtime running but RPC probe failed
 
-Because "running" is the **supervisor's** view (launchd/systemd/schtasks). The RPC probe is the CLI actually connecting to the gateway WebSocket and calling `status`.
+Because "running" is the **supervisor's** view (launchd/systemd). The RPC probe is the CLI actually connecting to the gateway WebSocket and calling `status`.
 
 Use `openclaw gateway status` and trust these lines:
 
@@ -2503,7 +2511,8 @@ Your gateway is running with auth enabled (`gateway.auth.*`), but the UI is not 
 
 Facts (from code):
 
-- The Control UI stores the token in browser localStorage key `openclaw.control.settings.v1`.
+- The Control UI keeps the token in `sessionStorage` for the current browser tab session and selected gateway URL, so same-tab refreshes keep working without restoring long-lived localStorage token persistence.
+- On `AUTH_TOKEN_MISMATCH`, trusted clients can attempt one bounded retry with a cached device token when the gateway returns retry hints (`canRetryWithDeviceToken=true`, `recommendedNextStep=retry_with_device_token`).
 
 Fix:
 
@@ -2512,6 +2521,9 @@ Fix:
 - If remote, tunnel first: `ssh -N -L 18789:127.0.0.1:18789 user@host` then open `http://127.0.0.1:18789/`.
 - Set `gateway.auth.token` (or `OPENCLAW_GATEWAY_TOKEN`) on the gateway host.
 - In the Control UI settings, paste the same token.
+- If mismatch persists after the one retry, rotate/re-approve the paired device token:
+  - `openclaw devices list`
+  - `openclaw devices rotate --device <id> --role operator`
 - Still stuck? Run `openclaw status --all` and follow [Troubleshooting](/gateway/troubleshooting). See [Dashboard](/web/dashboard) for auth details.
 
 ### I set gatewaybind tailnet but it can't bind nothing listens
@@ -2608,16 +2620,11 @@ openclaw gateway restart
 
 If you run the gateway manually, `openclaw gateway --force` can reclaim the port. See [Gateway](/gateway).
 
-### I closed my terminal on Windows how do I restart OpenClaw
+### I closed my terminal how do I restart OpenClaw
 
-There are **two Windows install modes**:
+If the service is installed, restart it with the CLI:
 
-**1) WSL2 (recommended):** the Gateway runs inside Linux.
-
-Open PowerShell, enter WSL, then restart:
-
-```powershell
-wsl
+```bash
 openclaw gateway status
 openclaw gateway restart
 ```
@@ -2628,22 +2635,7 @@ If you never installed the service, start it in the foreground:
 openclaw gateway run
 ```
 
-**2) Native Windows (not recommended):** the Gateway runs directly in Windows.
-
-Open PowerShell and run:
-
-```powershell
-openclaw gateway status
-openclaw gateway restart
-```
-
-If you run it manually (no service), use:
-
-```powershell
-openclaw gateway run
-```
-
-Docs: [Windows (WSL2)](/platforms/windows), [Gateway service runbook](/gateway).
+Docs: [Linux](/platforms/linux), [Gateway service runbook](/gateway).
 
 ### The Gateway is up but replies never arrive What should I check
 

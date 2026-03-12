@@ -144,7 +144,7 @@ out to QMD for retrieval. Key points:
   `~/.openclaw/agents/<agentId>/qmd/` by setting `XDG_CONFIG_HOME` and
   `XDG_CACHE_HOME`.
 - OS support: macOS and Linux work out of the box once Bun + SQLite are
-  installed. Windows is best supported via WSL2.
+  installed.
 
 **How the sidecar runs**
 

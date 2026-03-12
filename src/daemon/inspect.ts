@@ -5,12 +5,10 @@ import {
   GATEWAY_SERVICE_MARKER,
   resolveGatewayLaunchAgentLabel,
   resolveGatewaySystemdServiceName,
-  resolveGatewayWindowsTaskName,
 } from "./constants.js";
-import { execSchtasks } from "./schtasks-exec.js";
 
 export type ExtraGatewayService = {
-  platform: "darwin" | "linux" | "win32";
+  platform: "darwin" | "linux";
   label: string;
   detail: string;
   scope: "user" | "system";
@@ -39,10 +37,6 @@ export function renderGatewayServiceCleanupHints(
         `systemctl --user disable --now ${unit}.service`,
         `rm ~/.config/systemd/user/${unit}.service`,
       ];
-    }
-    case "win32": {
-      const task = resolveGatewayWindowsTaskName(profile);
-      return [`schtasks /Delete /TN "${task}" /F`];
     }
     default:
       return [];
@@ -104,15 +98,6 @@ function isOpenClawGatewaySystemdService(name: string, contents: string): boolea
     return false;
   }
   return contents.toLowerCase().includes("gateway");
-}
-
-function isOpenClawGatewayTaskName(name: string): boolean {
-  const normalized = name.trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  const defaultName = resolveGatewayWindowsTaskName().toLowerCase();
-  return normalized === defaultName || normalized.startsWith("openclaw gateway");
 }
 
 function tryExtractPlistLabel(contents: string): string | null {
@@ -264,54 +249,6 @@ async function scanSystemdDir(params: {
   return results;
 }
 
-type ScheduledTaskInfo = {
-  name: string;
-  taskToRun?: string;
-};
-
-function parseSchtasksList(output: string): ScheduledTaskInfo[] {
-  const tasks: ScheduledTaskInfo[] = [];
-  let current: ScheduledTaskInfo | null = null;
-
-  for (const rawLine of output.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line) {
-      if (current) {
-        tasks.push(current);
-        current = null;
-      }
-      continue;
-    }
-    const idx = line.indexOf(":");
-    if (idx <= 0) {
-      continue;
-    }
-    const key = line.slice(0, idx).trim().toLowerCase();
-    const value = line.slice(idx + 1).trim();
-    if (!value) {
-      continue;
-    }
-    if (key === "taskname") {
-      if (current) {
-        tasks.push(current);
-      }
-      current = { name: value };
-      continue;
-    }
-    if (!current) {
-      continue;
-    }
-    if (key === "task to run") {
-      current.taskToRun = value;
-    }
-  }
-
-  if (current) {
-    tasks.push(current);
-  }
-  return tasks;
-}
-
 export async function findExtraGatewayServices(
   env: Record<string, string | undefined>,
   opts: FindExtraGatewayServicesOptions = {},
@@ -383,47 +320,6 @@ export async function findExtraGatewayServices(
       }
     } catch {
       return results;
-    }
-    return results;
-  }
-
-  if (process.platform === "win32") {
-    if (!opts.deep) {
-      return results;
-    }
-    const res = await execSchtasks(["/Query", "/FO", "LIST", "/V"]);
-    if (res.code !== 0) {
-      return results;
-    }
-    const tasks = parseSchtasksList(res.stdout);
-    for (const task of tasks) {
-      const name = task.name.trim();
-      if (!name) {
-        continue;
-      }
-      if (isOpenClawGatewayTaskName(name)) {
-        continue;
-      }
-      const lowerName = name.toLowerCase();
-      const lowerCommand = task.taskToRun?.toLowerCase() ?? "";
-      let marker: Marker | null = null;
-      for (const candidate of EXTRA_MARKERS) {
-        if (lowerName.includes(candidate) || lowerCommand.includes(candidate)) {
-          marker = candidate;
-          break;
-        }
-      }
-      if (!marker) {
-        continue;
-      }
-      push({
-        platform: "win32",
-        label: name,
-        detail: task.taskToRun ? `task: ${name}, run: ${task.taskToRun}` : name,
-        scope: "system",
-        marker,
-        legacy: marker !== "openclaw",
-      });
     }
     return results;
   }

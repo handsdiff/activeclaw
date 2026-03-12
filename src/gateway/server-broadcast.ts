@@ -11,8 +11,6 @@ const EVENT_SCOPE_GUARDS: Record<string, string[]> = {
   "exec.approval.resolved": [APPROVALS_SCOPE],
   "device.pair.requested": [PAIRING_SCOPE],
   "device.pair.resolved": [PAIRING_SCOPE],
-  "node.pair.requested": [PAIRING_SCOPE],
-  "node.pair.resolved": [PAIRING_SCOPE],
 };
 
 export type GatewayBroadcastStateVersion = {

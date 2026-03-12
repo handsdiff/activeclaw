@@ -76,7 +76,7 @@ It does not install or modify anything on the remote host.
   <Step title="Daemon install">
     - macOS: LaunchAgent
       - Requires logged-in user session; for headless, use a custom LaunchDaemon (not shipped).
-    - Linux and Windows via WSL2: systemd user unit
+    - Linux: systemd user unit
       - Wizard attempts `loginctl enable-linger <user>` so gateway stays up after logout.
       - May prompt for sudo (writes `/var/lib/systemd/linger`); it tries without sudo first.
     - Runtime selection: Node (recommended; required for WhatsApp and Telegram). Bun is not recommended.
@@ -91,7 +91,7 @@ It does not install or modify anything on the remote host.
     - Installs optional dependencies (some use Homebrew on macOS).
   </Step>
   <Step title="Finish">
-    - Summary and next steps, including iOS, Android, and macOS app options.
+    - Summary and next steps for daily use, channels, and operations.
   </Step>
 </Steps>
 
@@ -155,8 +155,8 @@ What you set:
   <Accordion title="xAI (Grok) API key">
     Prompts for `XAI_API_KEY` and configures xAI as a model provider.
   </Accordion>
-  <Accordion title="OpenCode Zen">
-    Prompts for `OPENCODE_API_KEY` (or `OPENCODE_ZEN_API_KEY`).
+  <Accordion title="OpenCode">
+    Prompts for `OPENCODE_API_KEY` (or `OPENCODE_ZEN_API_KEY`) and lets you choose the Zen or Go catalog.
     Setup URL: [opencode.ai/auth](https://opencode.ai/auth).
   </Accordion>
   <Accordion title="API key (generic)">
@@ -247,7 +247,7 @@ Typical fields in `~/.openclaw/openclaw.json`:
 
 - `agents.defaults.workspace`
 - `agents.defaults.model` / `models.providers` (if Minimax chosen)
-- `tools.profile` (local onboarding defaults to `"messaging"` when unset; existing explicit values are preserved)
+- `tools.profile` (local onboarding defaults to `"coding"` when unset; existing explicit values are preserved)
 - `gateway.*` (mode, bind, auth, tailscale)
 - `session.dmScope` (local onboarding defaults this to `per-channel-peer` when unset; existing explicit values are preserved)
 - `channels.telegram.botToken`, `channels.discord.token`, `channels.signal.*`, `channels.imessage.*`
@@ -276,7 +276,7 @@ Gateway wizard RPC:
 - `wizard.cancel`
 - `wizard.status`
 
-Clients (macOS app and Control UI) can render steps without re-implementing onboarding logic.
+Clients can render steps without re-implementing onboarding logic.
 
 Signal setup behavior:
 
@@ -285,7 +285,7 @@ Signal setup behavior:
 - Writes `channels.signal.cliPath` in config
 - JVM builds require Java 21
 - Native builds are used when available
-- Windows uses WSL2 and follows Linux signal-cli flow inside WSL
+- Signal setup follows the Linux flow on supported hosts
 
 ## Related docs
 

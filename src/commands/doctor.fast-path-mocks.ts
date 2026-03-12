@@ -46,10 +46,6 @@ vi.mock("./doctor-state-integrity.js", () => ({
   noteWorkspaceBackupTip: vi.fn(),
 }));
 
-vi.mock("./doctor-ui.js", () => ({
-  maybeRepairUiProtocolFreshness: vi.fn().mockResolvedValue(undefined),
-}));
-
 vi.mock("./doctor-workspace-status.js", () => ({
   noteWorkspaceStatus: vi.fn(),
 }));

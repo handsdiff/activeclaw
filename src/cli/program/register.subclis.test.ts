@@ -9,19 +9,26 @@ const { acpAction, registerAcpCli } = vi.hoisted(() => {
   return { acpAction: action, registerAcpCli: register };
 });
 
-const { nodesAction, registerNodesCli } = vi.hoisted(() => {
+const { gatewayAction, registerGatewayCli } = vi.hoisted(() => {
   const action = vi.fn();
   const register = vi.fn((program: Command) => {
-    const nodes = program.command("nodes");
-    nodes.command("list").action(action);
+    const gateway = program.command("gateway");
+    gateway.command("status").action(action);
   });
-  return { nodesAction: action, registerNodesCli: register };
+  return { gatewayAction: action, registerGatewayCli: register };
 });
 
-vi.mock("../acp-cli.js", () => ({ registerAcpCli }));
-vi.mock("../nodes-cli.js", () => ({ registerNodesCli }));
+const configModule = vi.hoisted(() => ({
+  loadConfig: vi.fn(),
+  readConfigFileSnapshot: vi.fn(),
+}));
 
-const { registerSubCliByName, registerSubCliCommands } = await import("./register.subclis.js");
+vi.mock("../acp-cli.js", () => ({ registerAcpCli }));
+vi.mock("../gateway-cli.js", () => ({ registerGatewayCli }));
+vi.mock("../../config/config.js", () => configModule);
+
+const { loadValidatedConfigForPluginRegistration, registerSubCliByName, registerSubCliCommands } =
+  await import("./register.subclis.js");
 
 describe("registerSubCliCommands", () => {
   const originalArgv = process.argv;
@@ -45,8 +52,10 @@ describe("registerSubCliCommands", () => {
     }
     registerAcpCli.mockClear();
     acpAction.mockClear();
-    registerNodesCli.mockClear();
-    nodesAction.mockClear();
+    registerGatewayCli.mockClear();
+    gatewayAction.mockClear();
+    configModule.loadConfig.mockReset();
+    configModule.readConfigFileSnapshot.mockReset();
   });
 
   afterEach(() => {
@@ -75,19 +84,40 @@ describe("registerSubCliCommands", () => {
     const names = program.commands.map((cmd) => cmd.name());
     expect(names).toContain("acp");
     expect(names).toContain("gateway");
-    expect(names).toContain("clawbot");
     expect(registerAcpCli).not.toHaveBeenCalled();
   });
 
+  it("returns null for plugin registration when the config snapshot is invalid", async () => {
+    configModule.readConfigFileSnapshot.mockResolvedValueOnce({
+      valid: false,
+      config: { plugins: { load: { paths: ["/tmp/evil"] } } },
+    });
+
+    await expect(loadValidatedConfigForPluginRegistration()).resolves.toBeNull();
+    expect(configModule.loadConfig).not.toHaveBeenCalled();
+  });
+
+  it("loads validated config for plugin registration when the snapshot is valid", async () => {
+    const loadedConfig = { plugins: { enabled: true } };
+    configModule.readConfigFileSnapshot.mockResolvedValueOnce({
+      valid: true,
+      config: loadedConfig,
+    });
+    configModule.loadConfig.mockReturnValueOnce(loadedConfig);
+
+    await expect(loadValidatedConfigForPluginRegistration()).resolves.toBe(loadedConfig);
+    expect(configModule.loadConfig).toHaveBeenCalledTimes(1);
+  });
+
   it("re-parses argv for lazy subcommands", async () => {
-    const program = createRegisteredProgram(["node", "openclaw", "nodes", "list"], "openclaw");
+    const program = createRegisteredProgram(["node", "openclaw", "gateway", "status"], "openclaw");
 
-    expect(program.commands.map((cmd) => cmd.name())).toEqual(["nodes"]);
+    expect(program.commands.map((cmd) => cmd.name())).toEqual(["gateway"]);
 
-    await program.parseAsync(["nodes", "list"], { from: "user" });
+    await program.parseAsync(["gateway", "status"], { from: "user" });
 
-    expect(registerNodesCli).toHaveBeenCalledTimes(1);
-    expect(nodesAction).toHaveBeenCalledTimes(1);
+    expect(registerGatewayCli).toHaveBeenCalledTimes(1);
+    expect(gatewayAction).toHaveBeenCalledTimes(1);
   });
 
   it("replaces placeholder when registering a subcommand by name", async () => {

@@ -47,7 +47,7 @@ describe("ws connect policy", () => {
     expect(
       evaluateMissingDeviceIdentity({
         hasDeviceIdentity: true,
-        role: "node",
+        role: "operator",
         isControlUi: false,
         controlUiAuthPolicy: policy,
         trustedProxyAuthOk: false,
@@ -141,20 +141,6 @@ describe("ws connect policy", () => {
       }).kind,
     ).toBe("reject-unauthorized");
 
-    expect(
-      evaluateMissingDeviceIdentity({
-        hasDeviceIdentity: false,
-        role: "node",
-        isControlUi: false,
-        controlUiAuthPolicy: policy,
-        trustedProxyAuthOk: false,
-        sharedAuthOk: true,
-        authOk: true,
-        hasSharedAuth: true,
-        isLocalClient: false,
-      }).kind,
-    ).toBe("reject-device-required");
-
     // Trusted-proxy authenticated Control UI should bypass device-identity gating.
     expect(
       evaluateMissingDeviceIdentity({
@@ -190,7 +176,7 @@ describe("ws connect policy", () => {
 
   test("trusted-proxy control-ui bypass only applies to operator + trusted-proxy auth", () => {
     const cases: Array<{
-      role: "operator" | "node";
+      role: "operator";
       authMode: string;
       authOk: boolean;
       authMethod: string | undefined;
@@ -202,13 +188,6 @@ describe("ws connect policy", () => {
         authOk: true,
         authMethod: "trusted-proxy",
         expected: true,
-      },
-      {
-        role: "node",
-        authMode: "trusted-proxy",
-        authOk: true,
-        authMethod: "trusted-proxy",
-        expected: false,
       },
       {
         role: "operator",

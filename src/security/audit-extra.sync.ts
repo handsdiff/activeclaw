@@ -21,10 +21,6 @@ import {
 } from "../config/model-input.js";
 import type { AgentToolsConfig } from "../config/types.tools.js";
 import { resolveGatewayAuth } from "../gateway/auth.js";
-import {
-  DEFAULT_DANGEROUS_NODE_COMMANDS,
-  resolveNodeCommandAllowlist,
-} from "../gateway/node-command-policy.js";
 import { inferParamBFromIdOrName } from "../shared/model-param-b.js";
 import { pickSandboxToolPolicy } from "./audit-tool-policy.js";
 
@@ -192,107 +188,6 @@ function hasConfiguredDockerConfig(
     return false;
   }
   return Object.values(docker).some((value) => value !== undefined);
-}
-
-function normalizeNodeCommand(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function listKnownNodeCommands(cfg: OpenClawConfig): Set<string> {
-  const baseCfg: OpenClawConfig = {
-    ...cfg,
-    gateway: {
-      ...cfg.gateway,
-      nodes: {
-        ...cfg.gateway?.nodes,
-        denyCommands: [],
-      },
-    },
-  };
-  const out = new Set<string>();
-  for (const platform of ["ios", "android", "macos", "linux", "windows", "unknown"]) {
-    const allow = resolveNodeCommandAllowlist(baseCfg, { platform });
-    for (const cmd of allow) {
-      const normalized = normalizeNodeCommand(cmd);
-      if (normalized) {
-        out.add(normalized);
-      }
-    }
-  }
-  return out;
-}
-
-function looksLikeNodeCommandPattern(value: string): boolean {
-  if (!value) {
-    return false;
-  }
-  if (/[?*[\]{}(),|]/.test(value)) {
-    return true;
-  }
-  if (
-    value.startsWith("/") ||
-    value.endsWith("/") ||
-    value.startsWith("^") ||
-    value.endsWith("$")
-  ) {
-    return true;
-  }
-  return /\s/.test(value) || value.includes("group:");
-}
-
-function editDistance(a: string, b: string): number {
-  if (a === b) {
-    return 0;
-  }
-  if (!a) {
-    return b.length;
-  }
-  if (!b) {
-    return a.length;
-  }
-
-  const dp: number[] = Array.from({ length: b.length + 1 }, (_, j) => j);
-
-  for (let i = 1; i <= a.length; i++) {
-    let prev = dp[0];
-    dp[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      const temp = dp[j];
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + cost);
-      prev = temp;
-    }
-  }
-
-  return dp[b.length];
-}
-
-function suggestKnownNodeCommands(unknown: string, known: Set<string>): string[] {
-  const needle = unknown.trim();
-  if (!needle) {
-    return [];
-  }
-
-  // Fast path: prefix-ish suggestions.
-  const prefix = needle.includes(".") ? needle.split(".").slice(0, 2).join(".") : needle;
-  const prefixHits = Array.from(known)
-    .filter((cmd) => cmd.startsWith(prefix))
-    .slice(0, 3);
-  if (prefixHits.length > 0) {
-    return prefixHits;
-  }
-
-  // Fuzzy: Levenshtein over a small-ish known set.
-  const ranked = Array.from(known)
-    .map((cmd) => ({ cmd, d: editDistance(needle, cmd) }))
-    .toSorted((a, b) => a.d - b.d || a.cmd.localeCompare(b.cmd));
-
-  const best = ranked[0]?.d ?? Infinity;
-  const threshold = Math.max(2, Math.min(4, best));
-  return ranked
-    .filter((r) => r.d <= threshold)
-    .slice(0, 3)
-    .map((r) => r.cmd);
 }
 
 function resolveToolPolicies(params: {
@@ -967,98 +862,16 @@ export function collectSandboxDangerousConfigFindings(cfg: OpenClawConfig): Secu
   return findings;
 }
 
-export function collectNodeDenyCommandPatternFindings(cfg: OpenClawConfig): SecurityAuditFinding[] {
-  const findings: SecurityAuditFinding[] = [];
-  const denyListRaw = cfg.gateway?.nodes?.denyCommands;
-  if (!Array.isArray(denyListRaw) || denyListRaw.length === 0) {
-    return findings;
-  }
-
-  const denyList = denyListRaw.map(normalizeNodeCommand).filter(Boolean);
-  if (denyList.length === 0) {
-    return findings;
-  }
-
-  const knownCommands = listKnownNodeCommands(cfg);
-  const patternLike = denyList.filter((entry) => looksLikeNodeCommandPattern(entry));
-  const unknownExact = denyList.filter(
-    (entry) => !looksLikeNodeCommandPattern(entry) && !knownCommands.has(entry),
-  );
-  if (patternLike.length === 0 && unknownExact.length === 0) {
-    return findings;
-  }
-
-  const detailParts: string[] = [];
-  if (patternLike.length > 0) {
-    detailParts.push(
-      `Pattern-like entries (not supported by exact matching): ${patternLike.join(", ")}`,
-    );
-  }
-  if (unknownExact.length > 0) {
-    const unknownDetails = unknownExact
-      .map((entry) => {
-        const suggestions = suggestKnownNodeCommands(entry, knownCommands);
-        if (suggestions.length === 0) {
-          return entry;
-        }
-        return `${entry} (did you mean: ${suggestions.join(", ")})`;
-      })
-      .join(", ");
-
-    detailParts.push(`Unknown command names (not in defaults/allowCommands): ${unknownDetails}`);
-  }
-  const examples = Array.from(knownCommands).slice(0, 8);
-
-  findings.push({
-    checkId: "gateway.nodes.deny_commands_ineffective",
-    severity: "warn",
-    title: "Some gateway.nodes.denyCommands entries are ineffective",
-    detail:
-      "gateway.nodes.denyCommands uses exact node command-name matching only (for example `system.run`), not shell-text filtering inside a command payload.\n" +
-      detailParts.map((entry) => `- ${entry}`).join("\n"),
-    remediation:
-      `Use exact command names (for example: ${examples.join(", ")}). ` +
-      "If you need broader restrictions, remove risky command IDs from allowCommands/default workflows and tighten tools.exec policy.",
-  });
-
-  return findings;
+export function collectNodeDenyCommandPatternFindings(
+  _cfg: OpenClawConfig,
+): SecurityAuditFinding[] {
+  return [];
 }
 
 export function collectNodeDangerousAllowCommandFindings(
-  cfg: OpenClawConfig,
+  _cfg: OpenClawConfig,
 ): SecurityAuditFinding[] {
-  const findings: SecurityAuditFinding[] = [];
-  const allowRaw = cfg.gateway?.nodes?.allowCommands;
-  if (!Array.isArray(allowRaw) || allowRaw.length === 0) {
-    return findings;
-  }
-
-  const allow = new Set(allowRaw.map(normalizeNodeCommand).filter(Boolean));
-  if (allow.size === 0) {
-    return findings;
-  }
-
-  const deny = new Set((cfg.gateway?.nodes?.denyCommands ?? []).map(normalizeNodeCommand));
-  const dangerousAllowed = DEFAULT_DANGEROUS_NODE_COMMANDS.filter(
-    (cmd) => allow.has(cmd) && !deny.has(cmd),
-  );
-  if (dangerousAllowed.length === 0) {
-    return findings;
-  }
-
-  findings.push({
-    checkId: "gateway.nodes.allow_commands_dangerous",
-    severity: isGatewayRemotelyExposed(cfg) ? "critical" : "warn",
-    title: "Dangerous node commands explicitly enabled",
-    detail:
-      `gateway.nodes.allowCommands includes: ${dangerousAllowed.join(", ")}. ` +
-      "These commands can trigger high-impact device actions (camera/screen/contacts/calendar/reminders/SMS).",
-    remediation:
-      "Remove these entries from gateway.nodes.allowCommands (recommended). " +
-      "If you keep them, treat gateway auth as full operator access and keep gateway exposure local/tailnet-only.",
-  });
-
-  return findings;
+  return [];
 }
 
 export function collectMinimalProfileOverrideFindings(cfg: OpenClawConfig): SecurityAuditFinding[] {

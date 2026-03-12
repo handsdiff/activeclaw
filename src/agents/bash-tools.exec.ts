@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import { type ExecHost, maxAsk, minSecurity } from "../infra/exec-approvals.js";
+import { type ExecHost, loadExecApprovals, maxAsk, minSecurity } from "../infra/exec-approvals.js";
 import { resolveExecSafeBinRuntimePolicy } from "../infra/exec-safe-bin-runtime-policy.js";
 import {
   getShellPathFromLoginShell,
@@ -11,7 +11,6 @@ import { logInfo } from "../logger.js";
 import { parseAgentSessionKey, resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import { markBackgrounded } from "./bash-process-registry.js";
 import { processGatewayAllowlist } from "./bash-tools.exec-host-gateway.js";
-import { executeNodeHostCommand } from "./bash-tools.exec-host-node.js";
 import {
   DEFAULT_MAX_OUTPUT,
   DEFAULT_PATH,
@@ -324,7 +323,8 @@ export function createExecTool(
       if (elevatedRequested && elevatedMode === "full") {
         security = "full";
       }
-      const configuredAsk = defaults?.ask ?? "on-miss";
+      // Keep local exec defaults in sync with exec-approvals.json when tools.exec.ask is unset.
+      const configuredAsk = defaults?.ask ?? loadExecApprovals().defaults?.ask ?? "on-miss";
       const requestedAsk = normalizeExecAsk(params.ask);
       let ask = maxAsk(configuredAsk, requestedAsk ?? configuredAsk);
       const bypassApprovals = elevatedRequested && elevatedMode === "full";
@@ -341,7 +341,7 @@ export function createExecTool(
         throw new Error(
           [
             "exec host=sandbox is configured, but sandbox runtime is unavailable for this session.",
-            'Enable sandbox mode (`agents.defaults.sandbox.mode="non-main"` or `"all"`) or set tools.exec.host to "gateway"/"node".',
+            'Enable sandbox mode (`agents.defaults.sandbox.mode="non-main"` or `"all"`) or set tools.exec.host to "gateway".',
           ].join("\n"),
         );
       }
@@ -388,40 +388,7 @@ export function createExecTool(
         applyShellPath(env, shellPath);
       }
 
-      // `tools.exec.pathPrepend` is only meaningful when exec runs locally (gateway) or in the sandbox.
-      // Node hosts intentionally ignore request-scoped PATH overrides, so don't pretend this applies.
-      if (host === "node" && defaultPathPrepend.length > 0) {
-        warnings.push(
-          "Warning: tools.exec.pathPrepend is ignored for host=node. Configure PATH on the node host/service instead.",
-        );
-      } else {
-        applyPathPrepend(env, defaultPathPrepend);
-      }
-
-      if (host === "node") {
-        return executeNodeHostCommand({
-          command: params.command,
-          workdir,
-          env,
-          requestedEnv: params.env,
-          requestedNode: params.node?.trim(),
-          boundNode: defaults?.node?.trim(),
-          sessionKey: defaults?.sessionKey,
-          turnSourceChannel: defaults?.messageProvider,
-          turnSourceTo: defaults?.currentChannelId,
-          turnSourceAccountId: defaults?.accountId,
-          turnSourceThreadId: defaults?.currentThreadTs,
-          agentId,
-          security,
-          ask,
-          timeoutSec: params.timeout,
-          defaultTimeoutSec,
-          approvalRunningNoticeMs,
-          warnings,
-          notifySessionKey,
-          trustedSafeBinDirs,
-        });
-      }
+      applyPathPrepend(env, defaultPathPrepend);
 
       if (host === "gateway" && !bypassApprovals) {
         const gatewayResult = await processGatewayAllowlist({

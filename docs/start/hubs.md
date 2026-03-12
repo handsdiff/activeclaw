@@ -18,7 +18,7 @@ Use these hubs to discover every page, including deep dives and reference docs t
 - [Index](/)
 - [Getting Started](/start/getting-started)
 - [Quick start](/start/quickstart)
-- [Onboarding](/start/onboarding)
+- [Onboarding Wizard](/start/wizard)
 - [Wizard](/start/wizard)
 - [Setup](/start/setup)
 - [Dashboard (local Gateway)](http://127.0.0.1:18789/)
@@ -122,46 +122,16 @@ Use these hubs to discover every page, including deep dives and reference docs t
 - [Browser (Linux troubleshooting)](/tools/browser-linux-troubleshooting)
 - [Polls](/automation/poll)
 
-## Nodes, media, voice
+## Media
 
-- [Nodes overview](/nodes)
-- [Camera](/nodes/camera)
 - [Images](/nodes/images)
 - [Audio](/nodes/audio)
-- [Location command](/nodes/location-command)
-- [Voice wake](/nodes/voicewake)
-- [Talk mode](/nodes/talk)
 
 ## Platforms
 
 - [Platforms overview](/platforms)
-- [macOS](/platforms/macos)
-- [iOS](/platforms/ios)
-- [Android](/platforms/android)
-- [Windows (WSL2)](/platforms/windows)
 - [Linux](/platforms/linux)
 - [Web surfaces](/web)
-
-## macOS companion app (advanced)
-
-- [macOS dev setup](/platforms/mac/dev-setup)
-- [macOS menu bar](/platforms/mac/menu-bar)
-- [macOS voice wake](/platforms/mac/voicewake)
-- [macOS voice overlay](/platforms/mac/voice-overlay)
-- [macOS WebChat](/platforms/mac/webchat)
-- [macOS Canvas](/platforms/mac/canvas)
-- [macOS child process](/platforms/mac/child-process)
-- [macOS health](/platforms/mac/health)
-- [macOS icon](/platforms/mac/icon)
-- [macOS logging](/platforms/mac/logging)
-- [macOS permissions](/platforms/mac/permissions)
-- [macOS remote](/platforms/mac/remote)
-- [macOS signing](/platforms/mac/signing)
-- [macOS release](/platforms/mac/release)
-- [macOS gateway (launchd)](/platforms/mac/bundled-gateway)
-- [macOS XPC](/platforms/mac/xpc)
-- [macOS skills](/platforms/mac/skills)
-- [macOS Peekaboo](/platforms/mac/peekaboo)
 
 ## Workspace + templates
 
@@ -191,4 +161,3 @@ Use these hubs to discover every page, including deep dives and reference docs t
 
 - [Testing](/reference/test)
 - [Release checklist](/reference/RELEASING)
-- [Device models](/reference/device-models)

@@ -29,23 +29,14 @@ Check your Node version with `node --version` if you are unsure.
 
 <Steps>
   <Step title="Install OpenClaw (recommended)">
-    <Tabs>
-      <Tab title="macOS/Linux">
-        ```bash
-        curl -fsSL https://openclaw.ai/install.sh | bash
-        ```
-        <img
+    ```bash
+    curl -fsSL https://openclaw.ai/install.sh | bash
+    ```
+    <img
   src="/assets/install-script.svg"
   alt="Install Script Process"
   className="rounded-lg"
 />
-      </Tab>
-      <Tab title="Windows (PowerShell)">
-        ```powershell
-        iwr -useb https://openclaw.ai/install.ps1 | iex
-        ```
-      </Tab>
-    </Tabs>
 
     <Note>
     Other install methods and requirements: [Install](/install).
@@ -116,9 +107,6 @@ Full environment variable reference: [Environment vars](/help/environment).
 <Columns>
   <Card title="Onboarding Wizard (details)" href="/start/wizard">
     Full CLI wizard reference and advanced options.
-  </Card>
-  <Card title="macOS app onboarding" href="/start/onboarding">
-    First run flow for the macOS app.
   </Card>
 </Columns>
 

@@ -7,21 +7,18 @@ type ExecDirectiveParse = {
   execHost?: ExecHost;
   execSecurity?: ExecSecurity;
   execAsk?: ExecAsk;
-  execNode?: string;
   rawExecHost?: string;
   rawExecSecurity?: string;
   rawExecAsk?: string;
-  rawExecNode?: string;
   hasExecOptions: boolean;
   invalidHost: boolean;
   invalidSecurity: boolean;
   invalidAsk: boolean;
-  invalidNode: boolean;
 };
 
 function normalizeExecHost(value?: string): ExecHost | undefined {
   const normalized = value?.trim().toLowerCase();
-  if (normalized === "sandbox" || normalized === "gateway" || normalized === "node") {
+  if (normalized === "sandbox" || normalized === "gateway") {
     return normalized;
   }
   return undefined;
@@ -55,16 +52,13 @@ function parseExecDirectiveArgs(raw: string): Omit<
   let execHost: ExecHost | undefined;
   let execSecurity: ExecSecurity | undefined;
   let execAsk: ExecAsk | undefined;
-  let execNode: string | undefined;
   let rawExecHost: string | undefined;
   let rawExecSecurity: string | undefined;
   let rawExecAsk: string | undefined;
-  let rawExecNode: string | undefined;
   let hasExecOptions = false;
   let invalidHost = false;
   let invalidSecurity = false;
   let invalidAsk = false;
-  let invalidNode = false;
 
   const takeToken = (): string | null => {
     const res = takeDirectiveToken(raw, i);
@@ -127,18 +121,6 @@ function parseExecDirectiveArgs(raw: string): Omit<
       consumed = i;
       continue;
     }
-    if (key === "node") {
-      rawExecNode = value;
-      const trimmed = value.trim();
-      if (!trimmed) {
-        invalidNode = true;
-      } else {
-        execNode = trimmed;
-      }
-      hasExecOptions = true;
-      consumed = i;
-      continue;
-    }
     break;
   }
 
@@ -147,16 +129,13 @@ function parseExecDirectiveArgs(raw: string): Omit<
     execHost,
     execSecurity,
     execAsk,
-    execNode,
     rawExecHost,
     rawExecSecurity,
     rawExecAsk,
-    rawExecNode,
     hasExecOptions,
     invalidHost,
     invalidSecurity,
     invalidAsk,
-    invalidNode,
   };
 }
 
@@ -169,7 +148,6 @@ export function extractExecDirective(body?: string): ExecDirectiveParse {
       invalidHost: false,
       invalidSecurity: false,
       invalidAsk: false,
-      invalidNode: false,
     };
   }
   const re = /(?:^|\s)\/exec(?=$|\s|:)/i;
@@ -182,7 +160,6 @@ export function extractExecDirective(body?: string): ExecDirectiveParse {
       invalidHost: false,
       invalidSecurity: false,
       invalidAsk: false,
-      invalidNode: false,
     };
   }
   const start = match.index + match[0].indexOf("/exec");
@@ -196,15 +173,12 @@ export function extractExecDirective(body?: string): ExecDirectiveParse {
     execHost: parsed.execHost,
     execSecurity: parsed.execSecurity,
     execAsk: parsed.execAsk,
-    execNode: parsed.execNode,
     rawExecHost: parsed.rawExecHost,
     rawExecSecurity: parsed.rawExecSecurity,
     rawExecAsk: parsed.rawExecAsk,
-    rawExecNode: parsed.rawExecNode,
     hasExecOptions: parsed.hasExecOptions,
     invalidHost: parsed.invalidHost,
     invalidSecurity: parsed.invalidSecurity,
     invalidAsk: parsed.invalidAsk,
-    invalidNode: parsed.invalidNode,
   };
 }

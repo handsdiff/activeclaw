@@ -1,5 +1,5 @@
 ---
-summary: "Agent tool surface for OpenClaw (browser, canvas, nodes, message, cron) replacing legacy `openclaw-*` skills"
+summary: "Agent tool surface for OpenClaw (browser, canvas, message, cron) replacing legacy `openclaw-*` skills"
 read_when:
   - Adding or modifying agent tools
   - Retiring or changing `openclaw-*` skills
@@ -8,7 +8,7 @@ title: "Tools"
 
 # Tools (OpenClaw)
 
-OpenClaw exposes **first-class agent tools** for browser, canvas, nodes, and cron.
+OpenClaw exposes **first-class agent tools** for browser, canvas, messaging, and cron.
 These replace the old `openclaw-*` skills: the tools are typed, no shelling,
 and the agent should rely on them directly.
 
@@ -208,8 +208,7 @@ Notes:
 - If `process` is disallowed, `exec` runs synchronously and ignores `yieldMs`/`background`.
 - `elevated` is gated by `tools.elevated` plus any `agents.list[].tools.elevated` override (both must allow) and is an alias for `host=gateway` + `security=full`.
 - `elevated` only changes behavior when the agent is sandboxed (otherwise it’s a no-op).
-- `host=node` can target a macOS companion app or a headless node host (`openclaw node run`).
-- gateway/node approvals and allowlists: [Exec approvals](/tools/exec-approvals).
+- Host approvals and allowlists: [Exec approvals](/tools/exec-approvals).
 
 ### `process`
 
@@ -256,7 +255,7 @@ Enable with `tools.loopDetection.enabled: true` (default is `false`).
 
 ### `web_search`
 
-Search the web using Brave Search API.
+Search the web using Perplexity, Brave, Gemini, Grok, or Kimi.
 
 Core parameters:
 
@@ -265,7 +264,7 @@ Core parameters:
 
 Notes:
 
-- Requires a Brave API key (recommended: `openclaw configure --section web`, or set `BRAVE_API_KEY`).
+- Requires an API key for the chosen provider (recommended: `openclaw configure --section web`).
 - Enable via `tools.web.search.enabled`.
 - Responses are cached (default 15 min).
 - See [Web tools](/tools/web) for setup.
@@ -531,6 +530,8 @@ Browser tool:
 - `profile` (optional; defaults to `browser.defaultProfile`)
 - `target` (`sandbox` | `host` | `node`)
 - `node` (optional; pin a specific node id/name)
+- Troubleshooting guides:
+  - Linux startup/CDP issues: [Browser troubleshooting (Linux)](/tools/browser-linux-troubleshooting)
 
 ## Recommended agent flows
 

@@ -11,10 +11,16 @@ vi.mock("./register.agent.js", () => ({
   },
 }));
 
+vi.mock("./register.backup.js", () => ({
+  registerBackupCommand: (program: Command) => {
+    const backup = program.command("backup");
+    backup.command("create");
+  },
+}));
+
 vi.mock("./register.maintenance.js", () => ({
   registerMaintenanceCommands: (program: Command) => {
     program.command("doctor");
-    program.command("dashboard");
     program.command("reset");
     program.command("uninstall");
   },
@@ -67,6 +73,7 @@ describe("command-registry", () => {
     expect(names).toContain("config");
     expect(names).toContain("memory");
     expect(names).toContain("agents");
+    expect(names).toContain("backup");
     expect(names).toContain("browser");
     expect(names).toContain("sessions");
     expect(names).not.toContain("agent");
@@ -115,7 +122,6 @@ describe("command-registry", () => {
 
     const names = getCoreCliCommandNames();
     expect(names).toContain("doctor");
-    expect(names).toContain("dashboard");
     expect(names).toContain("reset");
     expect(names).toContain("uninstall");
     expect(names).not.toContain("maintenance");
@@ -140,8 +146,8 @@ describe("command-registry", () => {
     registerCoreCliCommands(program, testProgramContext, ["node", "openclaw", "doctor"]);
     expect(namesOf(program)).toEqual(["doctor"]);
 
-    const found = await registerCoreCliByName(program, testProgramContext, "dashboard");
+    const found = await registerCoreCliByName(program, testProgramContext, "reset");
     expect(found).toBe(true);
-    expect(namesOf(program)).toEqual(["doctor", "dashboard", "reset", "uninstall"]);
+    expect(namesOf(program)).toEqual(["doctor", "reset", "uninstall"]);
   });
 });

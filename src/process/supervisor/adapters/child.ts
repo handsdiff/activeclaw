@@ -5,21 +5,14 @@ import type { ManagedRunStdin, SpawnProcessAdapter } from "../types.js";
 import { toStringEnv } from "./env.js";
 
 function resolveCommand(command: string): string {
-  if (process.platform !== "win32") {
-    return command;
-  }
-  const lower = command.toLowerCase();
-  if (lower.endsWith(".exe") || lower.endsWith(".cmd") || lower.endsWith(".bat")) {
-    return command;
-  }
-  const basename = lower.split(/[\\/]/).pop() ?? lower;
-  if (basename === "npm" || basename === "pnpm" || basename === "yarn" || basename === "npx") {
-    return `${command}.cmd`;
-  }
   return command;
 }
 
 export type ChildAdapter = SpawnProcessAdapter<NodeJS.Signals | null>;
+
+function isServiceManagedRuntime(): boolean {
+  return Boolean(process.env.OPENCLAW_SERVICE_MARKER?.trim());
+}
 
 export async function createChildAdapter(params: {
   argv: string[];
@@ -34,11 +27,10 @@ export async function createChildAdapter(params: {
 
   const stdinMode = params.stdinMode ?? (params.input !== undefined ? "pipe-closed" : "inherit");
 
-  // On Windows, `detached: true` creates a new process group and can prevent
-  // stdout/stderr pipes from connecting when running under a Scheduled Task
-  // (headless, no console). Default to `detached: false` on Windows; on
-  // POSIX systems keep `detached: true` so the child survives parent exit.
-  const useDetached = process.platform !== "win32";
+  // In service-managed mode keep children attached so systemd/launchd can
+  // stop the full process tree reliably. Outside service mode preserve the
+  // existing POSIX detached behavior.
+  const useDetached = !isServiceManagedRuntime();
 
   const options: SpawnOptions = {
     cwd: params.cwd,

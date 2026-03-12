@@ -6,7 +6,6 @@ export type ExecToolDefaults = {
   host?: ExecHost;
   security?: ExecSecurity;
   ask?: ExecAsk;
-  node?: string;
   pathPrepend?: string[];
   safeBins?: string[];
   safeBinTrustedDirs?: string[];
@@ -60,4 +59,19 @@ export type ExecToolDetails =
       command: string;
       cwd?: string;
       nodeId?: string;
+      warningText?: string;
+    }
+  | {
+      status: "approval-unavailable";
+      reason:
+        | "initiating-platform-disabled"
+        | "initiating-platform-unsupported"
+        | "no-approval-route";
+      channelLabel?: string;
+      sentApproverDms?: boolean;
+      host: ExecHost;
+      command: string;
+      cwd?: string;
+      nodeId?: string;
+      warningText?: string;
     };

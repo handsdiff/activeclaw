@@ -2,7 +2,6 @@
 summary: "CLI reference for `openclaw browser` (profiles, tabs, actions, extension relay)"
 read_when:
   - You use `openclaw browser` and want examples for common tasks
-  - You want to control a browser running on another machine via a node host
   - You want to use the Chrome extension relay (attach/detach via toolbar button)
 title: "browser"
 ---
@@ -98,10 +97,8 @@ Then Chrome → `chrome://extensions` → enable “Developer mode” → “Loa
 
 Full guide: [Chrome extension](/tools/chrome-extension)
 
-## Remote browser control (node host proxy)
+## Remote browser control
 
-If the Gateway runs on a different machine than the browser, run a **node host** on the machine that has Chrome/Brave/Edge/Chromium. The Gateway will proxy browser actions to that node (no separate browser control server required).
-
-Use `gateway.nodes.browser.mode` to control auto-routing and `gateway.nodes.browser.node` to pin a specific node if multiple are connected.
+If the browser runs on another machine, attach through an explicit remote CDP profile (`browser.profiles.<name>.cdpUrl`) instead of the local extension relay.
 
 Security + remote setup: [Browser tool](/tools/browser), [Remote access](/gateway/remote), [Tailscale](/gateway/tailscale), [Security](/gateway/security)

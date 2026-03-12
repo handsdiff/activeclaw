@@ -14,10 +14,6 @@ import { runSecurityAudit } from "./audit.js";
 import * as skillScanner from "./skill-scanner.js";
 
 const isWindows = process.platform === "win32";
-const windowsAuditEnv = {
-  USERNAME: "Tester",
-  USERDOMAIN: "DESKTOP-TEST",
-};
 const execDockerRawUnavailable: NonNullable<SecurityAuditOptions["execDockerRawFn"]> = async () => {
   return {
     stdout: Buffer.alloc(0),
@@ -642,85 +638,6 @@ description: test skill
     );
   });
 
-  it("treats Windows ACL-only perms as secure", async () => {
-    const tmp = await makeTmpDir("win");
-    const stateDir = path.join(tmp, "state");
-    await fs.mkdir(stateDir, { recursive: true });
-    const configPath = path.join(stateDir, "openclaw.json");
-    await fs.writeFile(configPath, "{}\n", "utf-8");
-
-    const user = "DESKTOP-TEST\\Tester";
-    const execIcacls = async (_cmd: string, args: string[]) => ({
-      stdout: `${args[0]} NT AUTHORITY\\SYSTEM:(F)\n ${user}:(F)\n`,
-      stderr: "",
-    });
-
-    const res = await runSecurityAudit({
-      config: {},
-      includeFilesystem: true,
-      includeChannelSecurity: false,
-      stateDir,
-      configPath,
-      platform: "win32",
-      env: windowsAuditEnv,
-      execIcacls,
-      execDockerRawFn: execDockerRawUnavailable,
-    });
-
-    const forbidden = new Set([
-      "fs.state_dir.perms_world_writable",
-      "fs.state_dir.perms_group_writable",
-      "fs.state_dir.perms_readable",
-      "fs.config.perms_writable",
-      "fs.config.perms_world_readable",
-      "fs.config.perms_group_readable",
-    ]);
-    for (const id of forbidden) {
-      expect(res.findings.some((f) => f.checkId === id)).toBe(false);
-    }
-  });
-
-  it("flags Windows ACLs when Users can read the state dir", async () => {
-    const tmp = await makeTmpDir("win-open");
-    const stateDir = path.join(tmp, "state");
-    await fs.mkdir(stateDir, { recursive: true });
-    const configPath = path.join(stateDir, "openclaw.json");
-    await fs.writeFile(configPath, "{}\n", "utf-8");
-
-    const user = "DESKTOP-TEST\\Tester";
-    const execIcacls = async (_cmd: string, args: string[]) => {
-      const target = args[0];
-      if (target === stateDir) {
-        return {
-          stdout: `${target} NT AUTHORITY\\SYSTEM:(F)\n BUILTIN\\Users:(RX)\n ${user}:(F)\n`,
-          stderr: "",
-        };
-      }
-      return {
-        stdout: `${target} NT AUTHORITY\\SYSTEM:(F)\n ${user}:(F)\n`,
-        stderr: "",
-      };
-    };
-
-    const res = await runSecurityAudit({
-      config: {},
-      includeFilesystem: true,
-      includeChannelSecurity: false,
-      stateDir,
-      configPath,
-      platform: "win32",
-      env: windowsAuditEnv,
-      execIcacls,
-      execDockerRawFn: execDockerRawUnavailable,
-    });
-
-    expect(
-      res.findings.some(
-        (f) => f.checkId === "fs.state_dir.perms_readable" && f.severity === "warn",
-      ),
-    ).toBe(true);
-  });
-
   it("warns when sandbox browser containers have missing or stale hash labels", async () => {
     const { stateDir, configPath } = await createFilesystemAuditFixture("browser-hash-labels");
 
@@ -1143,119 +1060,6 @@ description: test skill
     );
   });
 
-  it("flags ineffective gateway.nodes.denyCommands entries", async () => {
-    const cfg: OpenClawConfig = {
-      gateway: {
-        nodes: {
-          denyCommands: ["system.*", "system.runx"],
-        },
-      },
-    };
-
-    const res = await audit(cfg);
-
-    const finding = res.findings.find(
-      (f) => f.checkId === "gateway.nodes.deny_commands_ineffective",
-    );
-    expect(finding?.severity).toBe("warn");
-    expect(finding?.detail).toContain("system.*");
-    expect(finding?.detail).toContain("system.runx");
-    expect(finding?.detail).toContain("did you mean");
-    expect(finding?.detail).toContain("system.run");
-  });
-
-  it("suggests prefix-matching commands for unknown denyCommands entries", async () => {
-    const cfg: OpenClawConfig = {
-      gateway: {
-        nodes: {
-          denyCommands: ["system.run.prep"],
-        },
-      },
-    };
-
-    const res = await audit(cfg);
-    const finding = res.findings.find(
-      (f) => f.checkId === "gateway.nodes.deny_commands_ineffective",
-    );
-    expect(finding?.severity).toBe("warn");
-    expect(finding?.detail).toContain("system.run.prep");
-    expect(finding?.detail).toContain("did you mean");
-    expect(finding?.detail).toContain("system.run.prepare");
-  });
-
-  it("keeps unknown denyCommands entries without suggestions when no close command exists", async () => {
-    const cfg: OpenClawConfig = {
-      gateway: {
-        nodes: {
-          denyCommands: ["zzzzzzzzzzzzzz"],
-        },
-      },
-    };
-
-    const res = await audit(cfg);
-    const finding = res.findings.find(
-      (f) => f.checkId === "gateway.nodes.deny_commands_ineffective",
-    );
-    expect(finding?.severity).toBe("warn");
-    expect(finding?.detail).toContain("zzzzzzzzzzzzzz");
-    expect(finding?.detail).not.toContain("did you mean");
-  });
-
-  it("scores dangerous gateway.nodes.allowCommands by exposure", async () => {
-    const cases: Array<{
-      name: string;
-      cfg: OpenClawConfig;
-      expectedSeverity: "warn" | "critical";
-    }> = [
-      {
-        name: "loopback gateway",
-        cfg: {
-          gateway: {
-            bind: "loopback",
-            nodes: { allowCommands: ["camera.snap", "screen.record"] },
-          },
-        },
-        expectedSeverity: "warn",
-      },
-      {
-        name: "lan-exposed gateway",
-        cfg: {
-          gateway: {
-            bind: "lan",
-            nodes: { allowCommands: ["camera.snap", "screen.record"] },
-          },
-        },
-        expectedSeverity: "critical",
-      },
-    ];
-
-    await Promise.all(
-      cases.map(async (testCase) => {
-        const res = await audit(testCase.cfg);
-        const finding = res.findings.find(
-          (f) => f.checkId === "gateway.nodes.allow_commands_dangerous",
-        );
-        expect(finding?.severity, testCase.name).toBe(testCase.expectedSeverity);
-        expect(finding?.detail, testCase.name).toContain("camera.snap");
-        expect(finding?.detail, testCase.name).toContain("screen.record");
-      }),
-    );
-  });
-
-  it("does not flag dangerous allowCommands entries when denied again", async () => {
-    const cfg: OpenClawConfig = {
-      gateway: {
-        nodes: {
-          allowCommands: ["camera.snap", "screen.record"],
-          denyCommands: ["camera.snap", "screen.record"],
-        },
-      },
-    };
-
-    const res = await audit(cfg);
-    expectNoFinding(res, "gateway.nodes.allow_commands_dangerous");
-  });
-
   it("flags agent profile overrides when global tools.profile is minimal", async () => {
     const cfg: OpenClawConfig = {
       tools: {
@@ -1490,7 +1294,7 @@ description: test skill
       channels: {
         feishu: {
           appId: "cli_test",
-          appSecret: "secret_test",
+          appSecret: "secret_test", // pragma: allowlist secret
         },
       },
     };
@@ -1522,7 +1326,7 @@ description: test skill
       channels: {
         feishu: {
           appId: "cli_test",
-          appSecret: "secret_test",
+          appSecret: "secret_test", // pragma: allowlist secret
           tools: { doc: false },
         },
       },
@@ -1966,8 +1770,8 @@ description: test skill
               mode: "http",
               botTokenSource: "config",
               botTokenStatus: "configured_unavailable",
-              signingSecretSource: "config",
-              signingSecretStatus: "configured_unavailable",
+              signingSecretSource: "config", // pragma: allowlist secret
+              signingSecretStatus: "configured_unavailable", // pragma: allowlist secret
               config: channel,
             };
           }
@@ -1978,8 +1782,8 @@ description: test skill
             mode: "http",
             botTokenSource: "config",
             botTokenStatus: "available",
-            signingSecretSource: "config",
-            signingSecretStatus: "available",
+            signingSecretSource: "config", // pragma: allowlist secret
+            signingSecretStatus: "available", // pragma: allowlist secret
             config: channel,
           };
         },
@@ -2042,8 +1846,8 @@ description: test skill
               mode: "http",
               botTokenSource: "config",
               botTokenStatus: "configured_unavailable",
-              signingSecretSource: "config",
-              signingSecretStatus: "configured_unavailable",
+              signingSecretSource: "config", // pragma: allowlist secret
+              signingSecretStatus: "configured_unavailable", // pragma: allowlist secret
               config: channel,
             };
           }
@@ -2054,8 +1858,8 @@ description: test skill
             mode: "http",
             botTokenSource: "config",
             botTokenStatus: "available",
-            signingSecretSource: "config",
-            signingSecretStatus: "missing",
+            signingSecretSource: "config", // pragma: allowlist secret
+            signingSecretStatus: "missing", // pragma: allowlist secret
             config: channel,
           };
         },
@@ -2794,56 +2598,28 @@ description: test skill
 
     const includePath = path.join(stateDir, "extra.json5");
     await fs.writeFile(includePath, "{ logging: { redactSensitive: 'off' } }\n", "utf-8");
-    if (isWindows) {
-      // Grant "Everyone" write access to trigger the perms_writable check on Windows
-      const { execSync } = await import("node:child_process");
-      execSync(`icacls "${includePath}" /grant Everyone:W`, { stdio: "ignore" });
-    } else {
-      await fs.chmod(includePath, 0o644);
-    }
+    await fs.chmod(includePath, 0o644);
 
     const configPath = path.join(stateDir, "openclaw.json");
     await fs.writeFile(configPath, `{ "$include": "./extra.json5" }\n`, "utf-8");
     await fs.chmod(configPath, 0o600);
 
     const cfg: OpenClawConfig = { logging: { redactSensitive: "off" } };
-    const user = "DESKTOP-TEST\\Tester";
-    const execIcacls = isWindows
-      ? async (_cmd: string, args: string[]) => {
-          const target = args[0];
-          if (target === includePath) {
-            return {
-              stdout: `${target} NT AUTHORITY\\SYSTEM:(F)\n BUILTIN\\Users:(W)\n ${user}:(F)\n`,
-              stderr: "",
-            };
-          }
-          return {
-            stdout: `${target} NT AUTHORITY\\SYSTEM:(F)\n ${user}:(F)\n`,
-            stderr: "",
-          };
-        }
-      : undefined;
     const res = await runSecurityAudit({
       config: cfg,
       includeFilesystem: true,
       includeChannelSecurity: false,
       stateDir,
       configPath,
-      platform: isWindows ? "win32" : undefined,
-      env: isWindows
-        ? { ...process.env, USERNAME: "Tester", USERDOMAIN: "DESKTOP-TEST" }
-        : undefined,
-      execIcacls,
       execDockerRawFn: execDockerRawUnavailable,
     });
 
-    const expectedCheckId = isWindows
-      ? "fs.config_include.perms_writable"
-      : "fs.config_include.perms_world_readable";
-
     expect(res.findings).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ checkId: expectedCheckId, severity: "critical" }),
+        expect.objectContaining({
+          checkId: "fs.config_include.perms_world_readable",
+          severity: "critical",
+        }),
       ]),
     );
   });

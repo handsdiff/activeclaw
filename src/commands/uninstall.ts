@@ -1,20 +1,20 @@
 import path from "node:path";
 import { cancel, confirm, isCancel, multiselect } from "@clack/prompts";
+import { formatCliCommand } from "../cli/command-format.js";
 import { isNixMode } from "../config/config.js";
 import { resolveGatewayService } from "../daemon/service.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { stylePromptHint, stylePromptMessage, stylePromptTitle } from "../terminal/prompt-style.js";
 import { resolveHomeDir } from "../utils.js";
 import { resolveCleanupPlanFromDisk } from "./cleanup-plan.js";
-import { removePath, removeStateAndLinkedPaths, removeWorkspaceDirs } from "./cleanup-utils.js";
+import { removeStateAndLinkedPaths, removeWorkspaceDirs } from "./cleanup-utils.js";
 
-type UninstallScope = "service" | "state" | "workspace" | "app";
+type UninstallScope = "service" | "state" | "workspace";
 
 export type UninstallOptions = {
   service?: boolean;
   state?: boolean;
   workspace?: boolean;
-  app?: boolean;
   all?: boolean;
   yes?: boolean;
   nonInteractive?: boolean;
@@ -34,7 +34,7 @@ function buildScopeSelection(opts: UninstallOptions): {
   scopes: Set<UninstallScope>;
   hadExplicit: boolean;
 } {
-  const hadExplicit = Boolean(opts.all || opts.service || opts.state || opts.workspace || opts.app);
+  const hadExplicit = Boolean(opts.all || opts.service || opts.state || opts.workspace);
   const scopes = new Set<UninstallScope>();
   if (opts.all || opts.service) {
     scopes.add("service");
@@ -44,9 +44,6 @@ function buildScopeSelection(opts: UninstallOptions): {
   }
   if (opts.all || opts.workspace) {
     scopes.add("workspace");
-  }
-  if (opts.all || opts.app) {
-    scopes.add("app");
   }
   return { scopes, hadExplicit };
 }
@@ -82,14 +79,8 @@ async function stopAndUninstallService(runtime: RuntimeEnv): Promise<boolean> {
   }
 }
 
-async function removeMacApp(runtime: RuntimeEnv, dryRun?: boolean) {
-  if (process.platform !== "darwin") {
-    return;
-  }
-  await removePath("/Applications/OpenClaw.app", runtime, {
-    dryRun,
-    label: "/Applications/OpenClaw.app",
-  });
+function logBackupRecommendation(runtime: RuntimeEnv) {
+  runtime.log(`Recommended first: ${formatCliCommand("openclaw backup create")}`);
 }
 
 export async function uninstallCommand(runtime: RuntimeEnv, opts: UninstallOptions) {
@@ -113,15 +104,10 @@ export async function uninstallCommand(runtime: RuntimeEnv, opts: UninstallOptio
         {
           value: "service",
           label: "Gateway service",
-          hint: "launchd / systemd / schtasks",
+          hint: "launchd / systemd",
         },
         { value: "state", label: "State + config", hint: "~/.openclaw" },
         { value: "workspace", label: "Workspace", hint: "agent files" },
-        {
-          value: "app",
-          label: "macOS app",
-          hint: "/Applications/OpenClaw.app",
-        },
       ],
       initialValues: ["service", "state", "workspace"],
     });
@@ -155,6 +141,10 @@ export async function uninstallCommand(runtime: RuntimeEnv, opts: UninstallOptio
   const { stateDir, configPath, oauthDir, configInsideState, oauthInsideState, workspaceDirs } =
     resolveCleanupPlanFromDisk();
 
+  if (scopes.has("state") || scopes.has("workspace")) {
+    logBackupRecommendation(runtime);
+  }
+
   if (scopes.has("service")) {
     if (dryRun) {
       runtime.log("[dry-run] remove gateway service");
@@ -173,10 +163,6 @@ export async function uninstallCommand(runtime: RuntimeEnv, opts: UninstallOptio
 
   if (scopes.has("workspace")) {
     await removeWorkspaceDirs(workspaceDirs, runtime, { dryRun });
-  }
-
-  if (scopes.has("app")) {
-    await removeMacApp(runtime, dryRun);
   }
 
   runtime.log("CLI still installed. Remove via npm/pnpm if desired.");

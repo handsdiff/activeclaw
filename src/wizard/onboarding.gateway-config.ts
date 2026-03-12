@@ -21,7 +21,6 @@ import {
   TAILSCALE_EXPOSURE_OPTIONS,
   TAILSCALE_MISSING_BIN_NOTE_LINES,
 } from "../gateway/gateway-config-prompts.shared.js";
-import { DEFAULT_DANGEROUS_NODE_COMMANDS } from "../gateway/node-command-policy.js";
 import { findTailscaleBinary } from "../infra/tailscale.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { validateIPv4AddressInput } from "../shared/net/ipv4.js";
@@ -165,7 +164,7 @@ export async function configureGatewayForOnboarding(
       defaults: nextConfig.secrets?.defaults,
     }).ref;
     const tokenMode =
-      flow === "quickstart" && opts.secretInputMode !== "ref"
+      flow === "quickstart" && opts.secretInputMode !== "ref" // pragma: allowlist secret
         ? quickstartTokenRef
           ? "ref"
           : "plaintext"
@@ -304,27 +303,6 @@ export async function configureGatewayForOnboarding(
     tailscaleMode,
     tailscaleBin,
   });
-
-  // If this is a new gateway setup (no existing gateway settings), start with a
-  // denylist for high-risk node commands. Users can arm these temporarily via
-  // /phone arm ... (phone-control plugin).
-  if (
-    !quickstartGateway.hasExisting &&
-    nextConfig.gateway?.nodes?.denyCommands === undefined &&
-    nextConfig.gateway?.nodes?.allowCommands === undefined &&
-    nextConfig.gateway?.nodes?.browser === undefined
-  ) {
-    nextConfig = {
-      ...nextConfig,
-      gateway: {
-        ...nextConfig.gateway,
-        nodes: {
-          ...nextConfig.gateway?.nodes,
-          denyCommands: [...DEFAULT_DANGEROUS_NODE_COMMANDS],
-        },
-      },
-    };
-  }
 
   return {
     nextConfig,

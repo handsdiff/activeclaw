@@ -1,4 +1,4 @@
-import { createLoggerBackedRuntime, type RuntimeEnv } from "openclaw/plugin-sdk";
+import { createLoggerBackedRuntime, type RuntimeEnv } from "openclaw/plugin-sdk/compat";
 import { resolveHubAccount } from "./accounts.js";
 import { handleHubInbound } from "./inbound.js";
 import { getHubRuntime } from "./runtime.js";

@@ -90,11 +90,8 @@ export default defineConfig({
     setupFiles: ["test/setup.ts"],
     exclude: [
       "dist/**",
-      "apps/macos/**",
-      "apps/macos/.build/**",
       "**/node_modules/**",
       "**/vendor/**",
-      "dist/OpenClaw.app/**",
       "**/*.live.test.ts",
       "**/*.e2e.test.ts",
     ],
@@ -116,7 +113,6 @@ export default defineConfig({
       exclude: [
         // Never count workspace packages/apps toward core coverage thresholds.
         "extensions/**",
-        "apps/**",
         "ui/**",
         "test/**",
         "src/**/*.test.ts",

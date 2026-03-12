@@ -32,10 +32,6 @@ vi.mock("./route.js", () => ({
   tryRouteCli: vi.fn(async () => true),
 }));
 
-vi.mock("./windows-argv.js", () => ({
-  normalizeWindowsArgv: (argv: string[]) => argv,
-}));
-
 import { runCli } from "./run-main.js";
 
 describe("runCli profile env bootstrap", () => {

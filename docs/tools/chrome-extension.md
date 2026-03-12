@@ -2,7 +2,6 @@
 summary: "Chrome extension: let OpenClaw drive your existing Chrome tab"
 read_when:
   - You want the agent to drive an existing Chrome tab (toolbar button)
-  - You need remote Gateway + local browser automation via Tailscale
   - You want to understand the security implications of browser takeover
 title: "Chrome Extension"
 ---
@@ -17,7 +16,7 @@ Attach/detach happens via a **single Chrome toolbar button**.
 
 There are three parts:
 
-- **Browser control service** (Gateway or node): the API the agent/tool calls (via the Gateway)
+- **Browser control service** (Gateway): the API the agent/tool calls
 - **Local relay server** (loopback CDP): bridges between the control server and the extension (`http://127.0.0.1:18792` by default)
 - **Chrome MV3 extension**: attaches to the active tab using `chrome.debugger` and pipes CDP messages to the relay
 
@@ -110,22 +109,15 @@ Configure the extension to use the derived relay port in the extension Options p
 
 If you see `!`:
 
-- Make sure the Gateway is running locally (default setup), or run a node host on this machine if the Gateway runs elsewhere.
+- Make sure the Gateway is running locally on this machine.
 - Open the extension Options page; it validates relay reachability + gateway-token auth.
 
-## Remote Gateway (use a node host)
+## Gateway placement
 
-### Local Gateway (same machine as Chrome) — usually **no extra steps**
+The extension relay is a same-machine feature.
 
-If the Gateway runs on the same machine as Chrome, it starts the browser control service on loopback
-and auto-starts the relay server. The extension talks to the local relay; the CLI/tool calls go to the Gateway.
-
-### Remote Gateway (Gateway runs elsewhere) — **run a node host**
-
-If your Gateway runs on another machine, start a node host on the machine that runs Chrome.
-The Gateway will proxy browser actions to that node; the extension + relay stay local to the browser machine.
-
-If multiple nodes are connected, pin one with `gateway.nodes.browser.node` or set `gateway.nodes.browser.mode`.
+- Keep the Gateway on the machine that runs Chrome.
+- If the browser runs elsewhere, use a remote CDP profile instead of the extension relay.
 
 ## Sandboxing (tool containers)
 
@@ -159,8 +151,8 @@ Debugging: `openclaw sandbox explain`
 
 ## Remote access tips
 
-- Keep the Gateway and node host on the same tailnet; avoid exposing relay ports to LAN or public Internet.
-- Pair nodes intentionally; disable browser proxy routing if you don’t want remote control (`gateway.nodes.browser.mode="off"`).
+- Keep the Gateway on a private network; avoid exposing relay ports to LAN or public Internet.
+- Leave the relay on loopback unless you have a real cross-namespace need. If the relay must cross namespaces, set `browser.relayBindHost` to an explicit bind address such as `0.0.0.0`, then keep access constrained with Gateway auth and a private network.
 
 ## How “extension path” works
 
@@ -184,7 +176,7 @@ This is powerful and risky. Treat it like giving the model “hands on your brow
 Recommendations:
 
 - Prefer a dedicated Chrome profile (separate from your personal browsing) for extension relay usage.
-- Keep the Gateway and any node hosts tailnet-only; rely on Gateway auth + node pairing.
+- Keep the Gateway tailnet-only; rely on Gateway auth.
 - Avoid exposing relay ports over LAN (`0.0.0.0`) and avoid Funnel (public).
 - The relay blocks non-extension origins and requires gateway-token auth for both `/cdp` and `/extension`.
 

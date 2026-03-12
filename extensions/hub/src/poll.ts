@@ -1,5 +1,5 @@
 import { setTimeout } from "node:timers/promises";
-import { fetchWithSsrFGuard } from "openclaw/plugin-sdk";
+import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/compat";
 import type { HubInboundMessage } from "./types.js";
 
 function buildTrustedHubFetchParams(url: string, signal?: AbortSignal) {

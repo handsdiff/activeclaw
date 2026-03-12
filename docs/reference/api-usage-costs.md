@@ -75,12 +75,20 @@ You can keep it local with `memorySearch.provider = "local"` (no API usage).
 
 See [Memory](/concepts/memory).
 
-### 4) Web search tool (Brave / Perplexity via OpenRouter)
+### 4) Web search tool
 
-`web_search` uses API keys and may incur usage charges:
+`web_search` uses API keys and may incur usage charges depending on your provider:
 
 - **Brave Search API**: `BRAVE_API_KEY` or `tools.web.search.apiKey`
-- **Perplexity** (via OpenRouter): `PERPLEXITY_API_KEY` or `OPENROUTER_API_KEY`
+- **Gemini (Google Search)**: `GEMINI_API_KEY` or `tools.web.search.gemini.apiKey`
+- **Grok (xAI)**: `XAI_API_KEY` or `tools.web.search.grok.apiKey`
+- **Kimi (Moonshot)**: `KIMI_API_KEY`, `MOONSHOT_API_KEY`, or `tools.web.search.kimi.apiKey`
+- **Perplexity Search API**: `PERPLEXITY_API_KEY`, `OPENROUTER_API_KEY`, or `tools.web.search.perplexity.apiKey`
+
+**Brave Search free credit:** Each Brave plan includes $5/month in renewing
+free credit. The Search plan costs $5 per 1,000 requests, so the credit covers
+1,000 requests/month at no charge. Set your usage limit in the Brave dashboard
+to avoid unexpected charges.
 
 See [Web tools](/tools/web).
 
@@ -118,15 +126,7 @@ probing is enabled.
 
 See [Models CLI](/cli/models).
 
-### 9) Talk (speech)
-
-Talk mode can invoke **ElevenLabs** when configured:
-
-- `ELEVENLABS_API_KEY` or `talk.apiKey`
-
-See [Talk mode](/nodes/talk).
-
-### 10) Skills (third-party APIs)
+### 9) Skills (third-party APIs)
 
 Skills can store `apiKey` in `skills.entries.<name>.apiKey`. If a skill uses that key for external
 APIs, it can incur costs according to the skill’s provider.

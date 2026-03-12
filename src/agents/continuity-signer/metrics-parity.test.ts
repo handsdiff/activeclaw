@@ -8,6 +8,7 @@ import {
   RUNTIME_METRICS,
   SUPPORTED_METRICS,
 } from "./metrics.js";
+import type { Policy } from "./types.js";
 
 function sorted(values: Iterable<string>): string[] {
   return [...values].toSorted();
@@ -59,7 +60,7 @@ describe("continuity-signer metrics parity", () => {
   it("passes lint for supported metrics and hard-fails on unknown ones", () => {
     expect(() => lintPolicyMetricCoverage(continuityNewPolicyFixture)).not.toThrow();
 
-    const invalidPolicy = {
+    const invalidPolicy: Policy = {
       ...continuityNewPolicyFixture,
       freeze_rules: [
         {

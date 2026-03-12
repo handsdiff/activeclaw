@@ -19,6 +19,7 @@ This page describes the current CLI behavior. If commands change, update this do
 - [`completion`](/cli/completion)
 - [`doctor`](/cli/doctor)
 - [`dashboard`](/cli/dashboard)
+- [`backup`](/cli/backup)
 - [`reset`](/cli/reset)
 - [`uninstall`](/cli/uninstall)
 - [`update`](/cli/update)
@@ -35,9 +36,6 @@ This page describes the current CLI behavior. If commands change, update this do
 - [`models`](/cli/models)
 - [`memory`](/cli/memory)
 - [`directory`](/cli/directory)
-- [`nodes`](/cli/nodes)
-- [`devices`](/cli/devices)
-- [`node`](/cli/node)
 - [`approvals`](/cli/approvals)
 - [`sandbox`](/cli/sandbox)
 - [`tui`](/cli/tui)
@@ -48,14 +46,12 @@ This page describes the current CLI behavior. If commands change, update this do
 - [`hooks`](/cli/hooks)
 - [`webhooks`](/cli/webhooks)
 - [`pairing`](/cli/pairing)
-- [`qr`](/cli/qr)
 - [`plugins`](/cli/plugins) (plugin commands)
 - [`channels`](/cli/channels)
 - [`security`](/cli/security)
 - [`secrets`](/cli/secrets)
 - [`skills`](/cli/skills)
 - [`daemon`](/cli/daemon) (legacy alias for gateway service commands)
-- [`clawbot`](/cli/clawbot) (legacy alias namespace)
 - [`voicecall`](/cli/voicecall) (plugin; if installed)
 
 ## Global flags
@@ -103,6 +99,9 @@ openclaw [--dev] [--profile <name>] <command>
   completion
   doctor
   dashboard
+  backup
+    create
+    verify
   security
     audit
   secrets
@@ -194,16 +193,6 @@ openclaw [--dev] [--profile <name>] <command>
     disable
     runs
     run
-  nodes
-  devices
-  node
-    run
-    status
-    install
-    uninstall
-    start
-    stop
-    restart
   approvals
     get
     set
@@ -250,9 +239,6 @@ openclaw [--dev] [--profile <name>] <command>
   pairing
     list
     approve
-  qr
-  clawbot
-    qr
   docs
   dns
     setup
@@ -333,7 +319,7 @@ Options:
 - `--non-interactive`
 - `--mode <local|remote>`
 - `--flow <quickstart|advanced|manual>` (manual is an alias for advanced)
-- `--auth-choice <setup-token|token|chutes|openai-codex|openai-api-key|openrouter-api-key|ai-gateway-api-key|moonshot-api-key|moonshot-api-key-cn|kimi-code-api-key|synthetic-api-key|venice-api-key|gemini-api-key|zai-api-key|mistral-api-key|apiKey|minimax-api|minimax-api-lightning|opencode-zen|custom-api-key|skip>`
+- `--auth-choice <setup-token|token|chutes|openai-codex|openai-api-key|openrouter-api-key|ai-gateway-api-key|moonshot-api-key|moonshot-api-key-cn|kimi-code-api-key|synthetic-api-key|venice-api-key|gemini-api-key|zai-api-key|mistral-api-key|apiKey|minimax-api|minimax-api-lightning|opencode-zen|opencode-go|custom-api-key|skip>`
 - `--token-provider <id>` (non-interactive; used with `--auth-choice token`)
 - `--token <token>` (non-interactive; used with `--auth-choice token`)
 - `--token-profile-id <id>` (non-interactive; default: `<provider>:manual`)
@@ -350,6 +336,7 @@ Options:
 - `--zai-api-key <key>`
 - `--minimax-api-key <key>`
 - `--opencode-zen-api-key <key>`
+- `--opencode-go-api-key <key>`
 - `--custom-base-url <url>` (non-interactive; used with `--auth-choice custom-api-key`)
 - `--custom-model-id <id>` (non-interactive; used with `--auth-choice custom-api-key`)
 - `--custom-api-key <key>` (non-interactive; optional; used with `--auth-choice custom-api-key`; falls back to `CUSTOM_API_KEY` when omitted)
@@ -656,7 +643,7 @@ Options:
 
 Notes:
 
-- Overview includes Gateway + node host service status when available.
+- Overview includes Gateway service status when available.
 
 ### Usage tracking
 
@@ -666,7 +653,6 @@ Surfaces:
 
 - `/status` (adds a short provider usage line when available)
 - `openclaw status --usage` (prints full provider breakdown)
-- macOS menu bar (Usage section under Context)
 
 Notes:
 
@@ -745,6 +731,7 @@ Options:
 - `--token <token>`
 - `--auth <token|password>`
 - `--password <password>`
+- `--password-file <path>`
 - `--tailscale <off|serve|funnel>`
 - `--tailscale-reset-on-exit`
 - `--allow-unconfigured`
@@ -760,7 +747,7 @@ Options:
 
 ### `gateway service`
 
-Manage the Gateway service (launchd/systemd/schtasks).
+Manage the Gateway service (launchd/systemd).
 
 Subcommands:
 
@@ -777,6 +764,7 @@ Notes:
 - `gateway status` supports `--no-probe`, `--deep`, and `--json` for scripting.
 - `gateway status` also surfaces legacy or extra gateway services when it can detect them (`--deep` adds system-level scans). Profile-named OpenClaw services are treated as first-class and aren't flagged as "extra".
 - `gateway status` prints which config path the CLI uses vs which config the service likely uses (service env), plus the resolved probe target URL.
+- On Linux systemd installs, status token-drift checks include both `Environment=` and `EnvironmentFile=` unit sources.
 - `gateway install|uninstall|start|stop|restart` support `--json` for scripting (default output stays human-friendly).
 - `gateway install` defaults to Node runtime; bun is **not recommended** (WhatsApp/Telegram bugs).
 - `gateway install` options: `--port`, `--runtime`, `--token`, `--force`, `--json`.
@@ -995,62 +983,6 @@ Subcommands:
 - `cron run <id> [--force]`
 
 All `cron` commands accept `--url`, `--token`, `--timeout`, `--expect-final`.
-
-## Node host
-
-`node` runs a **headless node host** or manages it as a background service. See
-[`openclaw node`](/cli/node).
-
-Subcommands:
-
-- `node run --host <gateway-host> --port 18789`
-- `node status`
-- `node install [--host <gateway-host>] [--port <port>] [--tls] [--tls-fingerprint <sha256>] [--node-id <id>] [--display-name <name>] [--runtime <node|bun>] [--force]`
-- `node uninstall`
-- `node stop`
-- `node restart`
-
-## Nodes
-
-`nodes` talks to the Gateway and targets paired nodes. See [/nodes](/nodes).
-
-Common options:
-
-- `--url`, `--token`, `--timeout`, `--json`
-
-Subcommands:
-
-- `nodes status [--connected] [--last-connected <duration>]`
-- `nodes describe --node <id|name|ip>`
-- `nodes list [--connected] [--last-connected <duration>]`
-- `nodes pending`
-- `nodes approve <requestId>`
-- `nodes reject <requestId>`
-- `nodes rename --node <id|name|ip> --name <displayName>`
-- `nodes invoke --node <id|name|ip> --command <command> [--params <json>] [--invoke-timeout <ms>] [--idempotency-key <key>]`
-- `nodes run --node <id|name|ip> [--cwd <path>] [--env KEY=VAL] [--command-timeout <ms>] [--needs-screen-recording] [--invoke-timeout <ms>] <command...>` (mac node or headless node host)
-- `nodes notify --node <id|name|ip> [--title <text>] [--body <text>] [--sound <name>] [--priority <passive|active|timeSensitive>] [--delivery <system|overlay|auto>] [--invoke-timeout <ms>]` (mac only)
-
-Camera:
-
-- `nodes camera list --node <id|name|ip>`
-- `nodes camera snap --node <id|name|ip> [--facing front|back|both] [--device-id <id>] [--max-width <px>] [--quality <0-1>] [--delay-ms <ms>] [--invoke-timeout <ms>]`
-- `nodes camera clip --node <id|name|ip> [--facing front|back] [--device-id <id>] [--duration <ms|10s|1m>] [--no-audio] [--invoke-timeout <ms>]`
-
-Canvas + screen:
-
-- `nodes canvas snapshot --node <id|name|ip> [--format png|jpg|jpeg] [--max-width <px>] [--quality <0-1>] [--invoke-timeout <ms>]`
-- `nodes canvas present --node <id|name|ip> [--target <urlOrPath>] [--x <px>] [--y <px>] [--width <px>] [--height <px>] [--invoke-timeout <ms>]`
-- `nodes canvas hide --node <id|name|ip> [--invoke-timeout <ms>]`
-- `nodes canvas navigate <url> --node <id|name|ip> [--invoke-timeout <ms>]`
-- `nodes canvas eval [<js>] --node <id|name|ip> [--js <code>] [--invoke-timeout <ms>]`
-- `nodes canvas a2ui push --node <id|name|ip> (--jsonl <path> | --text <text>) [--invoke-timeout <ms>]`
-- `nodes canvas a2ui reset --node <id|name|ip> [--invoke-timeout <ms>]`
-- `nodes screen record --node <id|name|ip> [--screen <index>] [--duration <ms|10s>] [--fps <n>] [--no-audio] [--out <path>] [--invoke-timeout <ms>]`
-
-Location:
-
-- `nodes location get --node <id|name|ip> [--max-age <ms>] [--accuracy <coarse|balanced|precise>] [--location-timeout <ms>] [--invoke-timeout <ms>]`
 
 ## Browser
 

@@ -72,28 +72,6 @@ describe("ensureOpenClawCliOnPath", () => {
     }
   });
 
-  it("prepends the bundled app bin dir when a sibling openclaw exists", () => {
-    const tmp = abs("/tmp/openclaw-path/case-bundled");
-    const appBinDir = path.join(tmp, "AppBin");
-    const cliPath = path.join(appBinDir, "openclaw");
-    setDir(tmp);
-    setDir(appBinDir);
-    setExe(cliPath);
-
-    process.env.PATH = "/usr/bin";
-    delete process.env.OPENCLAW_PATH_BOOTSTRAPPED;
-
-    ensureOpenClawCliOnPath({
-      execPath: cliPath,
-      cwd: tmp,
-      homeDir: tmp,
-      platform: "darwin",
-    });
-
-    const updated = process.env.PATH ?? "";
-    expect(updated.split(path.delimiter)[0]).toBe(appBinDir);
-  });
-
   it("is idempotent", () => {
     process.env.PATH = "/bin";
     process.env.OPENCLAW_PATH_BOOTSTRAPPED = "1";
@@ -108,11 +86,7 @@ describe("ensureOpenClawCliOnPath", () => {
 
   it("prepends mise shims when available", () => {
     const tmp = abs("/tmp/openclaw-path/case-mise");
-    const appBinDir = path.join(tmp, "AppBin");
-    const appCli = path.join(appBinDir, "openclaw");
     setDir(tmp);
-    setDir(appBinDir);
-    setExe(appCli);
 
     const miseDataDir = path.join(tmp, "mise");
     const shimsDir = path.join(miseDataDir, "shims");
@@ -124,7 +98,7 @@ describe("ensureOpenClawCliOnPath", () => {
     delete process.env.OPENCLAW_PATH_BOOTSTRAPPED;
 
     ensureOpenClawCliOnPath({
-      execPath: appCli,
+      execPath: path.join(tmp, "bin", "node"),
       cwd: tmp,
       homeDir: tmp,
       platform: "darwin",
@@ -132,19 +106,12 @@ describe("ensureOpenClawCliOnPath", () => {
 
     const updated = process.env.PATH ?? "";
     const parts = updated.split(path.delimiter);
-    const appBinIndex = parts.indexOf(appBinDir);
-    const shimsIndex = parts.indexOf(shimsDir);
-    expect(appBinIndex).toBeGreaterThanOrEqual(0);
-    expect(shimsIndex).toBeGreaterThan(appBinIndex);
+    expect(parts[0]).toBe(shimsDir);
   });
 
   it("only appends project-local node_modules/.bin when explicitly enabled", () => {
     const tmp = abs("/tmp/openclaw-path/case-project-local");
-    const appBinDir = path.join(tmp, "AppBin");
-    const appCli = path.join(appBinDir, "openclaw");
     setDir(tmp);
-    setDir(appBinDir);
-    setExe(appCli);
 
     const localBinDir = path.join(tmp, "node_modules", ".bin");
     const localCli = path.join(localBinDir, "openclaw");
@@ -156,7 +123,7 @@ describe("ensureOpenClawCliOnPath", () => {
     delete process.env.OPENCLAW_PATH_BOOTSTRAPPED;
 
     ensureOpenClawCliOnPath({
-      execPath: appCli,
+      execPath: path.join(tmp, "bin", "node"),
       cwd: tmp,
       homeDir: tmp,
       platform: "darwin",
@@ -168,7 +135,7 @@ describe("ensureOpenClawCliOnPath", () => {
     delete process.env.OPENCLAW_PATH_BOOTSTRAPPED;
 
     ensureOpenClawCliOnPath({
-      execPath: appCli,
+      execPath: path.join(tmp, "bin", "node"),
       cwd: tmp,
       homeDir: tmp,
       platform: "darwin",

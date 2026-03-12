@@ -63,6 +63,13 @@ export type TalkProviderConfig = {
   [key: string]: unknown;
 };
 
+export type ResolvedTalkConfig = {
+  /** Active Talk TTS provider resolved from the current config payload. */
+  provider: string;
+  /** Provider config for the active Talk provider. */
+  config: TalkProviderConfig;
+};
+
 export type TalkConfig = {
   /** Active Talk TTS provider (for example "elevenlabs"). */
   provider?: string;
@@ -70,6 +77,8 @@ export type TalkConfig = {
   providers?: Record<string, TalkProviderConfig>;
   /** Stop speaking when user starts talking (default: true). */
   interruptOnSpeech?: boolean;
+  /** Milliseconds of user silence before Talk mode sends the transcript after a pause. */
+  silenceTimeoutMs?: number;
 
   /**
    * Legacy ElevenLabs compatibility fields.
@@ -82,12 +91,17 @@ export type TalkConfig = {
   apiKey?: SecretInput;
 };
 
+export type TalkConfigResponse = TalkConfig & {
+  /** Canonical active Talk payload for clients. */
+  resolved?: ResolvedTalkConfig;
+};
+
 export type GatewayControlUiConfig = {
-  /** If false, the Gateway will not serve the Control UI (default /). */
+  /** Legacy no-op kept for old configs after Control UI asset removal. */
   enabled?: boolean;
-  /** Optional base path prefix for the Control UI (e.g. "/openclaw"). */
+  /** Legacy no-op kept for old configs after Control UI asset removal. */
   basePath?: string;
-  /** Optional filesystem root for Control UI assets (defaults to dist/control-ui). */
+  /** Legacy no-op kept for old configs after Control UI asset removal. */
   root?: string;
   /** Allowed browser origins for Control UI/WebChat websocket connections. */
   allowedOrigins?: string[];
@@ -331,20 +345,6 @@ export type GatewayHttpConfig = {
   securityHeaders?: GatewayHttpSecurityHeadersConfig;
 };
 
-export type GatewayNodesConfig = {
-  /** Browser routing policy for node-hosted browser proxies. */
-  browser?: {
-    /** Routing mode (default: auto). */
-    mode?: "auto" | "manual" | "off";
-    /** Pin to a specific node id/name (optional). */
-    node?: string;
-  };
-  /** Additional node.invoke commands to allow on the gateway. */
-  allowCommands?: string[];
-  /** Commands to deny even if they appear in the defaults or node claims. */
-  denyCommands?: string[];
-};
-
 export type GatewayToolsConfig = {
   /** Tools to deny via gateway HTTP /tools/invoke (extends defaults). */
   deny?: string[];
@@ -379,7 +379,6 @@ export type GatewayConfig = {
   reload?: GatewayReloadConfig;
   tls?: GatewayTlsConfig;
   http?: GatewayHttpConfig;
-  nodes?: GatewayNodesConfig;
   /**
    * IPs of trusted reverse proxies (e.g. Traefik, nginx). When a connection
    * arrives from one of these IPs, the Gateway trusts `x-forwarded-for`

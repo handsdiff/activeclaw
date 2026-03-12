@@ -1,8 +1,13 @@
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import type { OpenClawConfig } from "../../config/config.js";
-import { loadSessionStore, resolveStorePath, type SessionEntry } from "../../config/sessions.js";
+import {
+  loadSessionStore,
+  resolveSessionStoreEntry,
+  resolveStorePath,
+  type SessionEntry,
+} from "../../config/sessions.js";
+import { shouldSuppressLocalDiscordExecApprovalPrompt } from "../../discord/exec-approvals.js";
 import { logVerbose } from "../../globals.js";
-import { emitInboundHistoryFromContext } from "../../history/emit.js";
 import { fireAndForgetHook } from "../../hooks/fire-and-forget.js";
 import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
 import {
@@ -66,7 +71,7 @@ const isInboundAudioContext = (ctx: FinalizedMsgContext): boolean => {
   return AUDIO_HEADER_RE.test(trimmed);
 };
 
-const resolveSessionStoreEntry = (
+const resolveSessionStoreLookup = (
   ctx: FinalizedMsgContext,
   cfg: OpenClawConfig,
 ): {
@@ -85,7 +90,7 @@ const resolveSessionStoreEntry = (
     const store = loadSessionStore(storePath);
     return {
       sessionKey,
-      entry: store[sessionKey.toLowerCase()] ?? store[sessionKey],
+      entry: resolveSessionStoreEntry({ store, sessionKey }).existing,
     };
   } catch {
     return {
@@ -112,7 +117,6 @@ export async function dispatchReplyFromConfig(params: {
   const chatId = ctx.To ?? ctx.From;
   const messageId = ctx.MessageSid ?? ctx.MessageSidFirst ?? ctx.MessageSidLast;
   const sessionKey = ctx.SessionKey;
-  const agentId = sessionKey ? resolveSessionAgentId({ sessionKey, config: cfg }) : undefined;
   const startTime = diagnosticsEnabled ? Date.now() : 0;
   const canTrackSession = diagnosticsEnabled && Boolean(sessionKey);
 
@@ -162,34 +166,11 @@ export async function dispatchReplyFromConfig(params: {
   };
 
   if (shouldSkipDuplicateInbound(ctx)) {
-    if (agentId) {
-      fireAndForgetHook(
-        emitInboundHistoryFromContext({
-          cfg,
-          agentId,
-          ctx,
-          disposition: "dropped_duplicate",
-        }),
-        "dispatch-from-config: durable duplicate inbound history write failed",
-      );
-    }
     recordProcessed("skipped", { reason: "duplicate" });
     return { queuedFinal: false, counts: dispatcher.getQueuedCounts() };
   }
 
-  if (agentId) {
-    fireAndForgetHook(
-      emitInboundHistoryFromContext({
-        cfg,
-        agentId,
-        ctx,
-        disposition: "processed",
-      }),
-      "dispatch-from-config: durable inbound history write failed",
-    );
-  }
-
-  const sessionStoreEntry = resolveSessionStoreEntry(ctx, cfg);
+  const sessionStoreEntry = resolveSessionStoreLookup(ctx, cfg);
   const acpDispatchSessionKey = sessionStoreEntry.sessionKey ?? sessionKey;
   const inboundAudio = isInboundAudioContext(ctx);
   const sessionTtsAuto = normalizeTtsAutoMode(sessionStoreEntry.entry?.ttsAuto);
@@ -385,7 +366,26 @@ export async function dispatchReplyFromConfig(params: {
     let blockCount = 0;
 
     const resolveToolDeliveryPayload = (payload: ReplyPayload): ReplyPayload | null => {
+      if (
+        normalizeMessageChannel(ctx.Surface ?? ctx.Provider) === "discord" &&
+        shouldSuppressLocalDiscordExecApprovalPrompt({
+          cfg,
+          accountId: ctx.AccountId,
+          payload,
+        })
+      ) {
+        return null;
+      }
       if (shouldSendToolSummaries) {
+        return payload;
+      }
+      const execApproval =
+        payload.channelData &&
+        typeof payload.channelData === "object" &&
+        !Array.isArray(payload.channelData)
+          ? payload.channelData.execApproval
+          : undefined;
+      if (execApproval && typeof execApproval === "object" && !Array.isArray(execApproval)) {
         return payload;
       }
       // Group/native flows intentionally suppress tool summary text, but media-only

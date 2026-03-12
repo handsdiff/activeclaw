@@ -252,6 +252,29 @@ describe("gateway sessions patch", () => {
     expect(entry.spawnDepth).toBe(2);
   });
 
+  test("sets spawnedBy for ACP sessions", async () => {
+    const entry = expectPatchOk(
+      await runPatch({
+        storeKey: "agent:main:acp:child",
+        patch: {
+          key: "agent:main:acp:child",
+          spawnedBy: "agent:main:main",
+        },
+      }),
+    );
+    expect(entry.spawnedBy).toBe("agent:main:main");
+  });
+
+  test("sets spawnDepth for ACP sessions", async () => {
+    const entry = expectPatchOk(
+      await runPatch({
+        storeKey: "agent:main:acp:child",
+        patch: { key: "agent:main:acp:child", spawnDepth: 2 },
+      }),
+    );
+    expect(entry.spawnDepth).toBe(2);
+  });
+
   test("rejects spawnDepth on non-subagent sessions", async () => {
     const result = await runPatch({
       patch: { key: MAIN_SESSION_KEY, spawnDepth: 1 },
@@ -264,19 +287,17 @@ describe("gateway sessions patch", () => {
       await runPatch({
         patch: {
           key: MAIN_SESSION_KEY,
-          execHost: " NODE ",
+          execHost: " GATEWAY ",
           execSecurity: " ALLOWLIST ",
           execAsk: " ON-MISS ",
-          execNode: " worker-1 ",
           sendPolicy: "DENY" as unknown as "allow",
           groupActivation: "Always" as unknown as "mention",
         },
       }),
     );
-    expect(entry.execHost).toBe("node");
+    expect(entry.execHost).toBe("gateway");
     expect(entry.execSecurity).toBe("allowlist");
     expect(entry.execAsk).toBe("on-miss");
-    expect(entry.execNode).toBe("worker-1");
     expect(entry.sendPolicy).toBe("deny");
     expect(entry.groupActivation).toBe("always");
   });

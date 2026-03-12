@@ -115,22 +115,6 @@
           - "extensions/zalouser/**"
           - "docs/channels/zalouser.md"
 
-"app: android":
-  - changed-files:
-      - any-glob-to-any-file:
-          - "apps/android/**"
-          - "docs/platforms/android.md"
-"app: ios":
-  - changed-files:
-      - any-glob-to-any-file:
-          - "apps/ios/**"
-          - "docs/platforms/ios.md"
-"app: macos":
-  - changed-files:
-      - any-glob-to-any-file:
-          - "apps/macos/**"
-          - "docs/platforms/macos.md"
-          - "docs/platforms/mac/**"
 "app: web-ui":
   - changed-files:
       - any-glob-to-any-file:

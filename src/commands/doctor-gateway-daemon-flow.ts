@@ -1,10 +1,7 @@
 import { formatCliCommand } from "../cli/command-format.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveGatewayPort } from "../config/config.js";
-import {
-  resolveGatewayLaunchAgentLabel,
-  resolveNodeLaunchAgentLabel,
-} from "../daemon/constants.js";
+import { resolveGatewayLaunchAgentLabel } from "../daemon/constants.js";
 import { readLastGatewayErrorLine } from "../daemon/diagnostics.js";
 import {
   isLaunchAgentListed,
@@ -16,7 +13,6 @@ import { resolveGatewayService } from "../daemon/service.js";
 import { renderSystemdUnavailableHints } from "../daemon/systemd-hints.js";
 import { isSystemdUserServiceAvailable } from "../daemon/systemd.js";
 import { formatPortDiagnostics, inspectPortUsage } from "../infra/ports.js";
-import { isWSL } from "../infra/wsl.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { note } from "../terminal/note.js";
 import { sleep } from "../utils.js";
@@ -99,7 +95,7 @@ export async function maybeRepairGatewayDaemon(params: {
   }
 
   const service = resolveGatewayService();
-  // systemd can throw in containers/WSL; treat as "not loaded" and fall back to hints.
+  // systemd can throw in containers; treat as "not loaded" and fall back to hints.
   let loaded = false;
   try {
     loaded = await service.isLoaded({ env: process.env });
@@ -115,15 +111,6 @@ export async function maybeRepairGatewayDaemon(params: {
     const gatewayRepaired = await maybeRepairLaunchAgentBootstrap({
       env: process.env,
       title: "Gateway",
-      runtime: params.runtime,
-      prompter: params.prompter,
-    });
-    await maybeRepairLaunchAgentBootstrap({
-      env: {
-        ...process.env,
-        OPENCLAW_LAUNCHD_LABEL: resolveNodeLaunchAgentLabel(),
-      },
-      title: "Node",
       runtime: params.runtime,
       prompter: params.prompter,
     });
@@ -152,8 +139,7 @@ export async function maybeRepairGatewayDaemon(params: {
     if (process.platform === "linux") {
       const systemdAvailable = await isSystemdUserServiceAvailable().catch(() => false);
       if (!systemdAvailable) {
-        const wsl = await isWSL();
-        note(renderSystemdUnavailableHints({ wsl }).join("\n"), "Gateway");
+        note(renderSystemdUnavailableHints().join("\n"), "Gateway");
         return;
       }
     }
@@ -194,7 +180,6 @@ export async function maybeRepairGatewayDaemon(params: {
         const { programArguments, workingDirectory, environment } = await buildGatewayInstallPlan({
           env: process.env,
           port,
-          token: tokenResolution.token,
           runtime: daemonRuntime,
           warn: (message, title) => note(message, title),
           config: params.cfg,

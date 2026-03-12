@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import { resolveGatewayStateDir } from "./paths.js";
 import {
   buildMinimalServicePath,
-  buildNodeServiceEnvironment,
   buildServiceEnvironment,
   getMinimalServicePathParts,
   getMinimalServicePathPartsFromEnv,
@@ -185,12 +184,12 @@ describe("buildMinimalServicePath", () => {
     expect(parts).toContain("/bin");
   });
 
-  it("returns PATH as-is on Windows", () => {
+  it("returns an empty service PATH on unsupported platforms", () => {
     const result = buildMinimalServicePath({
       env: { PATH: "C:\\\\Windows\\\\System32" },
       platform: "win32",
     });
-    expect(result).toBe("C:\\\\Windows\\\\System32");
+    expect(result).toBe("");
   });
 
   it("includes Linux user directories when HOME is set in env", () => {
@@ -264,16 +263,15 @@ describe("buildServiceEnvironment", () => {
     const env = buildServiceEnvironment({
       env: { HOME: "/home/user" },
       port: 18789,
-      token: "secret",
     });
     expect(env.HOME).toBe("/home/user");
     if (process.platform === "win32") {
-      expect(env.PATH).toBe("");
+      expect(env).not.toHaveProperty("PATH");
     } else {
       expect(env.PATH).toContain("/usr/bin");
     }
     expect(env.OPENCLAW_GATEWAY_PORT).toBe("18789");
-    expect(env.OPENCLAW_GATEWAY_TOKEN).toBe("secret");
+    expect(env.OPENCLAW_GATEWAY_TOKEN).toBeUndefined();
     expect(env.OPENCLAW_SERVICE_MARKER).toBe("openclaw");
     expect(env.OPENCLAW_SERVICE_KIND).toBe("gateway");
     expect(typeof env.OPENCLAW_SERVICE_VERSION).toBe("string");
@@ -331,89 +329,12 @@ describe("buildServiceEnvironment", () => {
   });
 });
 
-describe("buildNodeServiceEnvironment", () => {
-  it("passes through HOME for node services", () => {
-    const env = buildNodeServiceEnvironment({
-      env: { HOME: "/home/user" },
-    });
-    expect(env.HOME).toBe("/home/user");
-  });
-
-  it("passes through OPENCLAW_GATEWAY_TOKEN for node services", () => {
-    const env = buildNodeServiceEnvironment({
-      env: { HOME: "/home/user", OPENCLAW_GATEWAY_TOKEN: " node-token " },
-    });
-    expect(env.OPENCLAW_GATEWAY_TOKEN).toBe("node-token");
-  });
-
-  it("maps legacy CLAWDBOT_GATEWAY_TOKEN to OPENCLAW_GATEWAY_TOKEN for node services", () => {
-    const env = buildNodeServiceEnvironment({
-      env: { HOME: "/home/user", CLAWDBOT_GATEWAY_TOKEN: " legacy-token " },
-    });
-    expect(env.OPENCLAW_GATEWAY_TOKEN).toBe("legacy-token");
-  });
-
-  it("prefers OPENCLAW_GATEWAY_TOKEN over legacy CLAWDBOT_GATEWAY_TOKEN", () => {
-    const env = buildNodeServiceEnvironment({
-      env: {
-        HOME: "/home/user",
-        OPENCLAW_GATEWAY_TOKEN: "openclaw-token",
-        CLAWDBOT_GATEWAY_TOKEN: "legacy-token",
-      },
-    });
-    expect(env.OPENCLAW_GATEWAY_TOKEN).toBe("openclaw-token");
-  });
-
-  it("omits OPENCLAW_GATEWAY_TOKEN when both token env vars are empty", () => {
-    const env = buildNodeServiceEnvironment({
-      env: {
-        HOME: "/home/user",
-        OPENCLAW_GATEWAY_TOKEN: "   ",
-        CLAWDBOT_GATEWAY_TOKEN: " ",
-      },
-    });
-    expect(env.OPENCLAW_GATEWAY_TOKEN).toBeUndefined();
-  });
-
-  it("forwards proxy environment variables for node services", () => {
-    const env = buildNodeServiceEnvironment({
-      env: {
-        HOME: "/home/user",
-        HTTPS_PROXY: " https://proxy.local:7890 ",
-        no_proxy: "localhost,127.0.0.1",
-      },
-    });
-
-    expect(env.HTTPS_PROXY).toBe("https://proxy.local:7890");
-    expect(env.no_proxy).toBe("localhost,127.0.0.1");
-  });
-
-  it("forwards TMPDIR for node services", () => {
-    const env = buildNodeServiceEnvironment({
-      env: { HOME: "/home/user", TMPDIR: "/tmp/custom" },
-    });
-    expect(env.TMPDIR).toBe("/tmp/custom");
-  });
-
-  it("falls back to os.tmpdir for node services when TMPDIR is not set", () => {
-    const env = buildNodeServiceEnvironment({
-      env: { HOME: "/home/user" },
-    });
-    expect(env.TMPDIR).toBe(os.tmpdir());
-  });
-});
-
-describe("shared Node TLS env defaults", () => {
+describe("shared service TLS env defaults", () => {
   const builders = [
     {
       name: "gateway service env",
       build: (env: Record<string, string | undefined>, platform?: NodeJS.Platform) =>
         buildServiceEnvironment({ env, port: 18789, platform }),
-    },
-    {
-      name: "node service env",
-      build: (env: Record<string, string | undefined>, platform?: NodeJS.Platform) =>
-        buildNodeServiceEnvironment({ env, platform }),
     },
   ] as const;
 

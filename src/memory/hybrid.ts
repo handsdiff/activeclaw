@@ -40,16 +40,18 @@ export function buildFtsQuery(raw: string): string | null {
     return null;
   }
   const quoted = tokens.map((t) => `"${t.replaceAll('"', "")}"`);
-  // Use OR so partial matches surface results.
-  // BM25 naturally ranks chunks with more matching terms higher.
-  return quoted.join(" OR ");
+  return quoted.join(" AND ");
 }
 
 export function bm25RankToScore(rank: number): number {
-  // SQLite FTS5 bm25() returns negative values (more negative = better match).
-  // Use absolute value so better matches produce higher normalized scores.
-  const absRank = Number.isFinite(rank) ? Math.abs(rank) : 0;
-  return absRank / (1 + absRank);
+  if (!Number.isFinite(rank)) {
+    return 1 / (1 + 999);
+  }
+  if (rank < 0) {
+    const relevance = -rank;
+    return relevance / (1 + relevance);
+  }
+  return 1 / (1 + rank);
 }
 
 export async function mergeHybridResults(params: {

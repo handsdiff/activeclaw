@@ -11,7 +11,7 @@ import {
   convertResponsesMessages,
   convertResponsesTools,
   processResponsesStream,
-} from "@mariozechner/pi-ai/dist/providers/openai-responses-shared.js";
+} from "./openai-responses-shared-compat.js";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 const INNIES_PROXY_PATH = "/v1/proxy/v1";

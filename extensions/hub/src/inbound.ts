@@ -13,7 +13,7 @@ import {
   type OutboundReplyPayload,
   type OpenClawConfig,
   type RuntimeEnv,
-} from "openclaw/plugin-sdk";
+} from "openclaw/plugin-sdk/compat";
 import type { ResolvedHubAccount } from "./accounts.js";
 import { getHubRuntime } from "./runtime.js";
 import { sendMessageHub } from "./send.js";

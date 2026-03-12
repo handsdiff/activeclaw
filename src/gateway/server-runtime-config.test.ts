@@ -41,6 +41,7 @@ describe("resolveGatewayRuntimeConfig", () => {
             trustedProxies: ["127.0.0.1"],
           },
         },
+        host: "127.0.0.1",
         expectedBindHost: "127.0.0.1",
       },
       {
@@ -48,6 +49,7 @@ describe("resolveGatewayRuntimeConfig", () => {
         cfg: {
           gateway: { bind: "loopback" as const, auth: TRUSTED_PROXY_AUTH, trustedProxies: ["::1"] },
         },
+        host: "127.0.0.1",
         expectedBindHost: "127.0.0.1",
       },
       {
@@ -59,10 +61,11 @@ describe("resolveGatewayRuntimeConfig", () => {
             trustedProxies: ["127.0.0.0/8"],
           },
         },
+        host: "127.0.0.1",
         expectedBindHost: "127.0.0.1",
       },
-    ])("allows $name", async ({ cfg, expectedBindHost }) => {
-      const result = await resolveGatewayRuntimeConfig({ cfg, port: 18789 });
+    ])("allows $name", async ({ cfg, host, expectedBindHost }) => {
+      const result = await resolveGatewayRuntimeConfig({ cfg, port: 18789, host });
       expect(result.authMode).toBe("trusted-proxy");
       expect(result.bindHost).toBe(expectedBindHost);
     });
@@ -73,6 +76,7 @@ describe("resolveGatewayRuntimeConfig", () => {
         cfg: {
           gateway: { bind: "loopback" as const, auth: TRUSTED_PROXY_AUTH, trustedProxies: [] },
         },
+        host: "127.0.0.1",
         expectedMessage:
           "gateway auth mode=trusted-proxy requires gateway.trustedProxies to be configured",
       },
@@ -85,6 +89,7 @@ describe("resolveGatewayRuntimeConfig", () => {
             trustedProxies: ["10.0.0.1"],
           },
         },
+        host: "127.0.0.1",
         expectedMessage:
           "gateway auth mode=trusted-proxy with bind=loopback requires gateway.trustedProxies to include 127.0.0.1, ::1, or a loopback CIDR",
       },
@@ -101,8 +106,8 @@ describe("resolveGatewayRuntimeConfig", () => {
         expectedMessage:
           "gateway auth mode=trusted-proxy requires gateway.trustedProxies to be configured",
       },
-    ])("rejects $name", async ({ cfg, expectedMessage }) => {
-      await expect(resolveGatewayRuntimeConfig({ cfg, port: 18789 })).rejects.toThrow(
+    ])("rejects $name", async ({ cfg, host, expectedMessage }) => {
+      await expect(resolveGatewayRuntimeConfig({ cfg, port: 18789, host })).rejects.toThrow(
         expectedMessage,
       );
     });
@@ -140,11 +145,12 @@ describe("resolveGatewayRuntimeConfig", () => {
       {
         name: "loopback binding with explicit none auth",
         cfg: { gateway: { bind: "loopback" as const, auth: { mode: "none" as const } } },
+        host: "127.0.0.1",
         expectedAuthMode: "none",
         expectedBindHost: "127.0.0.1",
       },
-    ])("allows $name", async ({ cfg, expectedAuthMode, expectedBindHost }) => {
-      const result = await resolveGatewayRuntimeConfig({ cfg, port: 18789 });
+    ])("allows $name", async ({ cfg, host, expectedAuthMode, expectedBindHost }) => {
+      const result = await resolveGatewayRuntimeConfig({ cfg, port: 18789, host });
       expect(result.authMode).toBe(expectedAuthMode);
       expect(result.bindHost).toBe(expectedBindHost);
     });
@@ -201,18 +207,17 @@ describe("resolveGatewayRuntimeConfig", () => {
       );
     });
 
-    it("rejects non-loopback control UI when allowed origins are missing", async () => {
-      await expect(
-        resolveGatewayRuntimeConfig({
-          cfg: {
-            gateway: {
-              bind: "lan",
-              auth: TOKEN_AUTH,
-            },
+    it("allows non-loopback binding without control UI origin settings", async () => {
+      const result = await resolveGatewayRuntimeConfig({
+        cfg: {
+          gateway: {
+            bind: "lan",
+            auth: TOKEN_AUTH,
           },
-          port: 18789,
-        }),
-      ).rejects.toThrow("non-loopback Control UI requires gateway.controlUi.allowedOrigins");
+        },
+        port: 18789,
+      });
+      expect(result.bindHost).toBe("0.0.0.0");
     });
 
     it("allows non-loopback control UI without allowed origins when dangerous fallback is enabled", async () => {
@@ -247,6 +252,7 @@ describe("resolveGatewayRuntimeConfig", () => {
           },
         },
         port: 18789,
+        host: "127.0.0.1",
       });
 
       expect(result.strictTransportSecurityHeader).toBe("max-age=31536000; includeSubDomains");
@@ -266,6 +272,7 @@ describe("resolveGatewayRuntimeConfig", () => {
           },
         },
         port: 18789,
+        host: "127.0.0.1",
       });
 
       expect(result.strictTransportSecurityHeader).toBeUndefined();

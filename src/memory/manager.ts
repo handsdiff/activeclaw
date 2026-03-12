@@ -147,6 +147,22 @@ type SearchRuntimeLease = {
   release: () => void;
 };
 
+export async function closeAllMemoryIndexManagers(): Promise<void> {
+  const pending = Array.from(INDEX_CACHE_PENDING.values());
+  if (pending.length > 0) {
+    await Promise.allSettled(pending);
+  }
+  const managers = Array.from(INDEX_CACHE.values());
+  INDEX_CACHE.clear();
+  for (const manager of managers) {
+    try {
+      await manager.close();
+    } catch (err) {
+      log.warn(`failed to close memory index manager: ${String(err)}`);
+    }
+  }
+}
+
 export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements MemorySearchManager {
   private readonly cacheKey: string;
   protected readonly cfg: OpenClawConfig;

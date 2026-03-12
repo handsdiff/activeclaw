@@ -33,14 +33,6 @@ vi.mock("./gateway-rpc.js", () => ({
     callGatewayFromCli(method, opts, params),
 }));
 
-vi.mock("./nodes-cli/rpc.js", async () => {
-  const actual = await vi.importActual<typeof import("./nodes-cli/rpc.js")>("./nodes-cli/rpc.js");
-  return {
-    ...actual,
-    resolveNodeId: vi.fn(async () => "node-1"),
-  };
-});
-
 vi.mock("../runtime.js", () => ({
   defaultRuntime,
 }));
@@ -78,7 +70,7 @@ describe("exec approvals CLI", () => {
     callGatewayFromCli.mockClear();
   });
 
-  it("routes get command to local, gateway, and node modes", async () => {
+  it("routes get command to local and gateway modes", async () => {
     await runApprovalsCommand(["approvals", "get"]);
 
     expect(callGatewayFromCli).not.toHaveBeenCalled();
@@ -88,14 +80,6 @@ describe("exec approvals CLI", () => {
     await runApprovalsCommand(["approvals", "get", "--gateway"]);
 
     expect(callGatewayFromCli).toHaveBeenCalledWith("exec.approvals.get", expect.anything(), {});
-    expect(runtimeErrors).toHaveLength(0);
-    callGatewayFromCli.mockClear();
-
-    await runApprovalsCommand(["approvals", "get", "--node", "macbook"]);
-
-    expect(callGatewayFromCli).toHaveBeenCalledWith("exec.approvals.node.get", expect.anything(), {
-      nodeId: "node-1",
-    });
     expect(runtimeErrors).toHaveLength(0);
   });
 

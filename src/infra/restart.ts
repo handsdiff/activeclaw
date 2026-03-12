@@ -18,7 +18,8 @@ export type RestartAttempt = {
 const SPAWN_TIMEOUT_MS = 2000;
 const SIGUSR1_AUTH_GRACE_MS = 5000;
 const DEFAULT_DEFERRAL_POLL_MS = 500;
-const DEFAULT_DEFERRAL_MAX_WAIT_MS = 30_000;
+// Cover slow in-flight embedded compaction work before forcing restart.
+const DEFAULT_DEFERRAL_MAX_WAIT_MS = 90_000;
 const RESTART_COOLDOWN_MS = 30_000;
 
 const restartLog = createSubsystemLogger("restart");
@@ -296,36 +297,37 @@ export function triggerOpenClawRestart(): RestartAttempt {
   cleanStaleGatewayProcessesSync();
 
   const tried: string[] = [];
-  if (process.platform !== "darwin") {
-    if (process.platform === "linux") {
-      const unit = normalizeSystemdUnit(
-        process.env.OPENCLAW_SYSTEMD_UNIT,
-        process.env.OPENCLAW_PROFILE,
-      );
-      const userArgs = ["--user", "restart", unit];
-      tried.push(`systemctl ${userArgs.join(" ")}`);
-      const userRestart = spawnSync("systemctl", userArgs, {
-        encoding: "utf8",
-        timeout: SPAWN_TIMEOUT_MS,
-      });
-      if (!userRestart.error && userRestart.status === 0) {
-        return { ok: true, method: "systemd", tried };
-      }
-      const systemArgs = ["restart", unit];
-      tried.push(`systemctl ${systemArgs.join(" ")}`);
-      const systemRestart = spawnSync("systemctl", systemArgs, {
-        encoding: "utf8",
-        timeout: SPAWN_TIMEOUT_MS,
-      });
-      if (!systemRestart.error && systemRestart.status === 0) {
-        return { ok: true, method: "systemd", tried };
-      }
-      const detail = [
-        `user: ${formatSpawnDetail(userRestart)}`,
-        `system: ${formatSpawnDetail(systemRestart)}`,
-      ].join("; ");
-      return { ok: false, method: "systemd", detail, tried };
+  if (process.platform === "linux") {
+    const unit = normalizeSystemdUnit(
+      process.env.OPENCLAW_SYSTEMD_UNIT,
+      process.env.OPENCLAW_PROFILE,
+    );
+    const userArgs = ["--user", "restart", unit];
+    tried.push(`systemctl ${userArgs.join(" ")}`);
+    const userRestart = spawnSync("systemctl", userArgs, {
+      encoding: "utf8",
+      timeout: SPAWN_TIMEOUT_MS,
+    });
+    if (!userRestart.error && userRestart.status === 0) {
+      return { ok: true, method: "systemd", tried };
     }
+    const systemArgs = ["restart", unit];
+    tried.push(`systemctl ${systemArgs.join(" ")}`);
+    const systemRestart = spawnSync("systemctl", systemArgs, {
+      encoding: "utf8",
+      timeout: SPAWN_TIMEOUT_MS,
+    });
+    if (!systemRestart.error && systemRestart.status === 0) {
+      return { ok: true, method: "systemd", tried };
+    }
+    const detail = [
+      `user: ${formatSpawnDetail(userRestart)}`,
+      `system: ${formatSpawnDetail(systemRestart)}`,
+    ].join("; ");
+    return { ok: false, method: "systemd", detail, tried };
+  }
+
+  if (process.platform !== "darwin") {
     return {
       ok: false,
       method: "supervisor",

@@ -104,14 +104,6 @@ function getShellProfilePath(shell: string): string {
     case "fish":
       return path.join(home, ".config", "fish", "config.fish");
     case "powershell":
-      if (process.platform === "win32") {
-        return path.join(
-          process.env.USERPROFILE || home,
-          "Documents",
-          "PowerShell",
-          "Microsoft.PowerShell_profile.ps1",
-        );
-      }
       return path.join(home, ".config", "powershell", "Microsoft.PowerShell_profile.ps1");
     default:
       return path.join(home, ".zshrc");

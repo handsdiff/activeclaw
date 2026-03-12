@@ -1,10 +1,14 @@
 import { Command } from "commander";
 import { describe, expect, it, vi } from "vitest";
-import { parseCanvasSnapshotPayload } from "./nodes-canvas.js";
 import { parseByteSize } from "./parse-bytes.js";
 import { parseDurationMs } from "./parse-duration.js";
 import { shouldSkipRespawnForArgv } from "./respawn-policy.js";
 import { waitForever } from "./wait.js";
+
+vi.mock("../infra/tailnet.js", () => ({
+  pickPrimaryTailnetIPv4: () => undefined,
+  pickPrimaryTailnetIPv6: () => undefined,
+}));
 
 const { registerDnsCli } = await import("./dns-cli.js");
 
@@ -31,21 +35,6 @@ describe("shouldSkipRespawnForArgv", () => {
 
   it("keeps respawn path for normal commands", () => {
     expect(shouldSkipRespawnForArgv(["node", "openclaw", "status"])).toBe(false);
-  });
-});
-
-describe("nodes canvas helpers", () => {
-  it("parses canvas.snapshot payload", () => {
-    expect(parseCanvasSnapshotPayload({ format: "png", base64: "aGk=" })).toEqual({
-      format: "png",
-      base64: "aGk=",
-    });
-  });
-
-  it("rejects invalid canvas.snapshot payload", () => {
-    expect(() => parseCanvasSnapshotPayload({ format: "png" })).toThrow(
-      /invalid canvas\.snapshot payload/i,
-    );
   });
 });
 

@@ -15,10 +15,7 @@ import {
   updatePairedDeviceMetadata,
   verifyDeviceToken,
 } from "../../../infra/device-pairing.js";
-import { updatePairedNodeMetadata } from "../../../infra/node-pairing.js";
-import { recordRemoteNodeInfo, refreshRemoteNodeBins } from "../../../infra/skills-remote.js";
 import { upsertPresence } from "../../../infra/system-presence.js";
-import { loadVoiceWakeConfig } from "../../../infra/voicewake.js";
 import { rawDataToString } from "../../../infra/ws.js";
 import type { createSubsystemLogger } from "../../../logging/subsystem.js";
 import { roleScopesAllow } from "../../../shared/operator-scope-compat.js";
@@ -27,11 +24,6 @@ import { resolveRuntimeServiceVersion } from "../../../version.js";
 import type { AuthRateLimiter } from "../../auth-rate-limit.js";
 import type { GatewayAuthResult, ResolvedGatewayAuth } from "../../auth.js";
 import { isLocalDirectRequest } from "../../auth.js";
-import {
-  buildCanvasScopedHostUrl,
-  CANVAS_CAPABILITY_TTL_MS,
-  mintCanvasCapabilityToken,
-} from "../../canvas-capability.js";
 import {
   buildDeviceAuthPayload,
   buildDeviceAuthPayloadV3,
@@ -43,7 +35,6 @@ import {
   isTrustedProxyAddress,
   resolveClientIp,
 } from "../../net.js";
-import { resolveNodeCommandAllowlist } from "../../node-command-policy.js";
 import { checkBrowserOrigin } from "../../origin-check.js";
 import { GATEWAY_CLIENT_IDS, GATEWAY_CLIENT_MODES } from "../../protocol/client-info.js";
 import {
@@ -278,7 +269,6 @@ export function attachGatewayWsMessageHandler(params: {
     requestHost,
     requestOrigin,
     requestUserAgent,
-    canvasHostUrl,
     connectNonce,
     resolvedAuth,
     rateLimiter,
@@ -562,6 +552,31 @@ export function attachGatewayWsMessageHandler(params: {
           clientIp: browserRateLimitClientIp,
         });
         const rejectUnauthorized = (failedAuth: GatewayAuthResult) => {
+          const canRetryWithDeviceToken =
+            failedAuth.reason === "token_mismatch" &&
+            Boolean(device) &&
+            hasSharedAuth &&
+            !connectParams.auth?.deviceToken;
+          const recommendedNextStep = (() => {
+            if (canRetryWithDeviceToken) {
+              return "retry_with_device_token";
+            }
+            switch (failedAuth.reason) {
+              case "token_missing":
+              case "token_missing_config":
+              case "password_missing":
+              case "password_missing_config":
+                return "update_auth_configuration";
+              case "token_mismatch":
+              case "password_mismatch":
+              case "device_token_mismatch":
+                return "update_auth_credentials";
+              case "rate_limited":
+                return "wait_then_retry";
+              default:
+                return "review_auth_configuration";
+            }
+          })();
           markHandshakeFailure("unauthorized", {
             authMode: resolvedAuth.mode,
             authProvided: connectParams.auth?.password
@@ -594,6 +609,8 @@ export function attachGatewayWsMessageHandler(params: {
             details: {
               code: resolveAuthConnectErrorDetailCode(failedAuth.reason),
               authReason: failedAuth.reason,
+              canRetryWithDeviceToken,
+              recommendedNextStep,
             },
           });
           close(1008, truncateCloseReason(authMessage));
@@ -960,19 +977,6 @@ export function attachGatewayWsMessageHandler(params: {
           ? await ensureDeviceToken({ deviceId: device.id, role, scopes })
           : null;
 
-        if (role === "node") {
-          const cfg = loadConfig();
-          const allowlist = resolveNodeCommandAllowlist(cfg, {
-            platform: connectParams.client.platform,
-            deviceFamily: connectParams.client.deviceFamily,
-          });
-          const declared = Array.isArray(connectParams.commands) ? connectParams.commands : [];
-          const filtered = declared
-            .map((cmd) => cmd.trim())
-            .filter((cmd) => cmd.length > 0 && allowlist.has(cmd));
-          connectParams.commands = filtered;
-        }
-
         const shouldTrackPresence = !isGatewayCliClient(connectParams.client);
         const clientId = connectParams.client.id;
         const instanceId = connectParams.client.instanceId;
@@ -1019,15 +1023,9 @@ export function attachGatewayWsMessageHandler(params: {
           snapshot.health = cachedHealth;
           snapshot.stateVersion.health = getHealthVersion();
         }
-        const canvasCapability =
-          role === "node" && canvasHostUrl ? mintCanvasCapabilityToken() : undefined;
-        const canvasCapabilityExpiresAtMs = canvasCapability
-          ? Date.now() + CANVAS_CAPABILITY_TTL_MS
-          : undefined;
-        const scopedCanvasHostUrl =
-          canvasHostUrl && canvasCapability
-            ? (buildCanvasScopedHostUrl(canvasHostUrl, canvasCapability) ?? canvasHostUrl)
-            : canvasHostUrl;
+        const canvasCapability = undefined;
+        const canvasCapabilityExpiresAtMs = undefined;
+        const scopedCanvasHostUrl = undefined;
         const helloOk = {
           type: "hello-ok",
           protocol: PROTOCOL_VERSION,
@@ -1060,61 +1058,12 @@ export function attachGatewayWsMessageHandler(params: {
           connId,
           presenceKey,
           clientIp: reportedClientIp,
-          canvasHostUrl,
+          canvasHostUrl: scopedCanvasHostUrl,
           canvasCapability,
           canvasCapabilityExpiresAtMs,
         };
         setClient(nextClient);
         setHandshakeState("connected");
-        if (role === "node") {
-          const context = buildRequestContext();
-          const nodeSession = context.nodeRegistry.register(nextClient, {
-            remoteIp: reportedClientIp,
-          });
-          const instanceIdRaw = connectParams.client.instanceId;
-          const instanceId = typeof instanceIdRaw === "string" ? instanceIdRaw.trim() : "";
-          const nodeIdsForPairing = new Set<string>([nodeSession.nodeId]);
-          if (instanceId) {
-            nodeIdsForPairing.add(instanceId);
-          }
-          for (const nodeId of nodeIdsForPairing) {
-            void updatePairedNodeMetadata(nodeId, {
-              lastConnectedAtMs: nodeSession.connectedAtMs,
-            }).catch((err) =>
-              logGateway.warn(`failed to record last connect for ${nodeId}: ${formatForLog(err)}`),
-            );
-          }
-          recordRemoteNodeInfo({
-            nodeId: nodeSession.nodeId,
-            displayName: nodeSession.displayName,
-            platform: nodeSession.platform,
-            deviceFamily: nodeSession.deviceFamily,
-            commands: nodeSession.commands,
-            remoteIp: nodeSession.remoteIp,
-          });
-          void refreshRemoteNodeBins({
-            nodeId: nodeSession.nodeId,
-            platform: nodeSession.platform,
-            deviceFamily: nodeSession.deviceFamily,
-            commands: nodeSession.commands,
-            cfg: loadConfig(),
-          }).catch((err) =>
-            logGateway.warn(
-              `remote bin probe failed for ${nodeSession.nodeId}: ${formatForLog(err)}`,
-            ),
-          );
-          void loadVoiceWakeConfig()
-            .then((cfg) => {
-              context.nodeRegistry.sendEvent(nodeSession.nodeId, "voicewake.changed", {
-                triggers: cfg.triggers,
-              });
-            })
-            .catch((err) =>
-              logGateway.warn(
-                `voicewake snapshot failed for ${nodeSession.nodeId}: ${formatForLog(err)}`,
-              ),
-            );
-        }
 
         logWs("out", "hello-ok", {
           connId,

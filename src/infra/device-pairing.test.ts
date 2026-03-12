@@ -80,7 +80,7 @@ describe("device pairing tokens", () => {
       {
         deviceId: "device-1",
         publicKey: "public-key-1",
-        role: "node",
+        role: "service",
         scopes: [],
       },
       baseDir,
@@ -97,12 +97,12 @@ describe("device pairing tokens", () => {
 
     expect(second.created).toBe(false);
     expect(second.request.requestId).toBe(first.request.requestId);
-    expect(second.request.roles).toEqual(["node", "operator"]);
+    expect(second.request.roles).toEqual(["service", "operator"]);
     expect(second.request.scopes).toEqual(["operator.read", "operator.write"]);
 
     await approveDevicePairing(first.request.requestId, baseDir);
     const paired = await getPairedDevice("device-1", baseDir);
-    expect(paired?.roles).toEqual(["node", "operator"]);
+    expect(paired?.roles).toEqual(["service", "operator"]);
     expect(paired?.scopes).toEqual(["operator.read", "operator.write"]);
   });
 

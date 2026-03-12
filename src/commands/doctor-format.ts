@@ -2,16 +2,14 @@ import { formatCliCommand } from "../cli/command-format.js";
 import {
   resolveGatewayLaunchAgentLabel,
   resolveGatewaySystemdServiceName,
-  resolveGatewayWindowsTaskName,
 } from "../daemon/constants.js";
-import { resolveGatewayLogPaths } from "../daemon/launchd.js";
 import { formatRuntimeStatus } from "../daemon/runtime-format.js";
+import { buildPlatformRuntimeLogHints } from "../daemon/runtime-hints.js";
 import type { GatewayServiceRuntime } from "../daemon/service-runtime.js";
 import {
   isSystemdUnavailableDetail,
   renderSystemdUnavailableHints,
 } from "../daemon/systemd-hints.js";
-import { isWSLEnv } from "../infra/wsl.js";
 import { getResolvedLoggerSettings } from "../logging.js";
 
 type RuntimeHintOptions = {
@@ -43,7 +41,7 @@ export function buildGatewayRuntimeHints(
     }
   })();
   if (platform === "linux" && isSystemdUnavailableDetail(runtime.detail)) {
-    hints.push(...renderSystemdUnavailableHints({ wsl: isWSLEnv() }));
+    hints.push(...renderSystemdUnavailableHints());
     if (fileLog) {
       hints.push(`File logs: ${fileLog}`);
     }
@@ -68,17 +66,13 @@ export function buildGatewayRuntimeHints(
     if (fileLog) {
       hints.push(`File logs: ${fileLog}`);
     }
-    if (platform === "darwin") {
-      const logs = resolveGatewayLogPaths(env);
-      hints.push(`Launchd stdout (if installed): ${logs.stdoutPath}`);
-      hints.push(`Launchd stderr (if installed): ${logs.stderrPath}`);
-    } else if (platform === "linux") {
-      const unit = resolveGatewaySystemdServiceName(env.OPENCLAW_PROFILE);
-      hints.push(`Logs: journalctl --user -u ${unit}.service -n 200 --no-pager`);
-    } else if (platform === "win32") {
-      const task = resolveGatewayWindowsTaskName(env.OPENCLAW_PROFILE);
-      hints.push(`Logs: schtasks /Query /TN "${task}" /V /FO LIST`);
-    }
+    hints.push(
+      ...buildPlatformRuntimeLogHints({
+        platform,
+        env,
+        systemdServiceName: resolveGatewaySystemdServiceName(env.OPENCLAW_PROFILE),
+      }),
+    );
   }
   return hints;
 }

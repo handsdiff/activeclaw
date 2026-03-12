@@ -1,5 +1,5 @@
-import SHARED_TOOL_DISPLAY_JSON from "../../apps/shared/OpenClawKit/Sources/OpenClawKit/Resources/tool-display.json" with { type: "json" };
 import { redactToolDetail } from "../logging/redact.js";
+import SHARED_TOOL_DISPLAY_JSON from "../shared/tool-display.json" with { type: "json" };
 import { shortenHomeInString } from "../utils.js";
 import {
   defaultTitle,

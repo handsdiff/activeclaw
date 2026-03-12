@@ -124,13 +124,12 @@ describe("directive parsing", () => {
 
   it("matches exec directive with options", () => {
     const res = extractExecDirective(
-      "please /exec host=gateway security=allowlist ask=on-miss node=mac-mini now",
+      "please /exec host=gateway security=allowlist ask=on-miss now",
     );
     expect(res.hasDirective).toBe(true);
     expect(res.execHost).toBe("gateway");
     expect(res.execSecurity).toBe("allowlist");
     expect(res.execAsk).toBe("on-miss");
-    expect(res.execNode).toBe("mac-mini");
     expect(res.cleaned).toBe("please now");
   });
 

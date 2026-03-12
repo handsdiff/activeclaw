@@ -14,14 +14,7 @@ export function isSystemdUnavailableDetail(detail?: string): boolean {
   );
 }
 
-export function renderSystemdUnavailableHints(options: { wsl?: boolean } = {}): string[] {
-  if (options.wsl) {
-    return [
-      "WSL2 needs systemd enabled: edit /etc/wsl.conf with [boot]\\nsystemd=true",
-      "Then run: wsl --shutdown (from PowerShell) and reopen your distro.",
-      "Verify: systemctl --user status",
-    ];
-  }
+export function renderSystemdUnavailableHints(): string[] {
   return [
     "systemd user services are unavailable; install/enable systemd or run the gateway under your supervisor.",
     `If you're in a container, run the gateway in the foreground instead of \`${formatCliCommand("openclaw gateway")}\`.`,

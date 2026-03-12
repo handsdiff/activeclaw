@@ -9,7 +9,6 @@ import {
   type ResolvedGatewayAuth,
   resolveGatewayAuth,
 } from "./auth.js";
-import { normalizeControlUiBasePath } from "./control-ui-shared.js";
 import { resolveHooksConfig } from "./hooks.js";
 import {
   isLoopbackHost,
@@ -21,14 +20,11 @@ import { mergeGatewayTailscaleConfig } from "./startup-auth.js";
 
 export type GatewayRuntimeConfig = {
   bindHost: string;
-  controlUiEnabled: boolean;
   openAiChatCompletionsEnabled: boolean;
   openAiChatCompletionsConfig?: import("../config/types.gateway.js").GatewayHttpChatCompletionsConfig;
   openResponsesEnabled: boolean;
   openResponsesConfig?: import("../config/types.gateway.js").GatewayHttpResponsesConfig;
   strictTransportSecurityHeader?: string;
-  controlUiBasePath: string;
-  controlUiRoot?: string;
   resolvedAuth: ResolvedGatewayAuth;
   authMode: ResolvedGatewayAuth["mode"];
   tailscaleConfig: GatewayTailscaleConfig;
@@ -42,7 +38,6 @@ export async function resolveGatewayRuntimeConfig(params: {
   port: number;
   bind?: GatewayBindMode;
   host?: string;
-  controlUiEnabled?: boolean;
   openAiChatCompletionsEnabled?: boolean;
   openResponsesEnabled?: boolean;
   auth?: GatewayAuthConfig;
@@ -72,8 +67,6 @@ export async function resolveGatewayRuntimeConfig(params: {
       );
     }
   }
-  const controlUiEnabled =
-    params.controlUiEnabled ?? params.cfg.gateway?.controlUi?.enabled ?? true;
   const openAiChatCompletionsConfig = params.cfg.gateway?.http?.endpoints?.chatCompletions;
   const openAiChatCompletionsEnabled =
     params.openAiChatCompletionsEnabled ?? openAiChatCompletionsConfig?.enabled ?? false;
@@ -88,12 +81,6 @@ export async function resolveGatewayRuntimeConfig(params: {
           strictTransportSecurityConfig.trim().length > 0
         ? strictTransportSecurityConfig.trim()
         : undefined;
-  const controlUiBasePath = normalizeControlUiBasePath(params.cfg.gateway?.controlUi?.basePath);
-  const controlUiRootRaw = params.cfg.gateway?.controlUi?.root;
-  const controlUiRoot =
-    typeof controlUiRootRaw === "string" && controlUiRootRaw.trim().length > 0
-      ? controlUiRootRaw.trim()
-      : undefined;
   const tailscaleBase = params.cfg.gateway?.tailscale ?? {};
   const tailscaleOverrides = params.tailscale ?? {};
   const tailscaleConfig = mergeGatewayTailscaleConfig(tailscaleBase, tailscaleOverrides);
@@ -115,13 +102,8 @@ export async function resolveGatewayRuntimeConfig(params: {
     process.env.OPENCLAW_SKIP_CANVAS_HOST !== "1" && params.cfg.canvasHost?.enabled !== false;
 
   const trustedProxies = params.cfg.gateway?.trustedProxies ?? [];
-  const controlUiAllowedOrigins = (params.cfg.gateway?.controlUi?.allowedOrigins ?? [])
-    .map((value) => value.trim())
-    .filter(Boolean);
-  const dangerouslyAllowHostHeaderOriginFallback =
-    params.cfg.gateway?.controlUi?.dangerouslyAllowHostHeaderOriginFallback === true;
 
-  assertGatewayAuthConfigured(resolvedAuth);
+  assertGatewayAuthConfigured(resolvedAuth, params.cfg.gateway?.auth);
   if (tailscaleMode === "funnel" && authMode !== "password") {
     throw new Error(
       "tailscale funnel requires gateway auth mode=password (set gateway.auth.password or OPENCLAW_GATEWAY_PASSWORD)",
@@ -135,17 +117,6 @@ export async function resolveGatewayRuntimeConfig(params: {
       `refusing to bind gateway to ${bindHost}:${params.port} without auth (set gateway.auth.token/password, or set OPENCLAW_GATEWAY_TOKEN/OPENCLAW_GATEWAY_PASSWORD)`,
     );
   }
-  if (
-    controlUiEnabled &&
-    !isLoopbackHost(bindHost) &&
-    controlUiAllowedOrigins.length === 0 &&
-    !dangerouslyAllowHostHeaderOriginFallback
-  ) {
-    throw new Error(
-      "non-loopback Control UI requires gateway.controlUi.allowedOrigins (set explicit origins), or set gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback=true to use Host-header origin fallback mode",
-    );
-  }
-
   if (authMode === "trusted-proxy") {
     if (trustedProxies.length === 0) {
       throw new Error(
@@ -166,7 +137,6 @@ export async function resolveGatewayRuntimeConfig(params: {
 
   return {
     bindHost,
-    controlUiEnabled,
     openAiChatCompletionsEnabled,
     openAiChatCompletionsConfig: openAiChatCompletionsConfig
       ? { ...openAiChatCompletionsConfig, enabled: openAiChatCompletionsEnabled }
@@ -176,8 +146,6 @@ export async function resolveGatewayRuntimeConfig(params: {
       ? { ...openResponsesConfig, enabled: openResponsesEnabled }
       : undefined,
     strictTransportSecurityHeader,
-    controlUiBasePath,
-    controlUiRoot,
     resolvedAuth,
     authMode,
     tailscaleConfig,

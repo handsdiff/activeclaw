@@ -1,7 +1,6 @@
 import {
   resolveGatewayLaunchAgentLabel,
   resolveGatewaySystemdServiceName,
-  resolveGatewayWindowsTaskName,
 } from "../../daemon/constants.js";
 import { resolveGatewayService } from "../../daemon/service.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -76,11 +75,6 @@ export function renderGatewayServiceStopHints(env: NodeJS.ProcessEnv = process.e
       return [
         `Tip: ${formatCliCommand("openclaw gateway stop")}`,
         `Or: systemctl --user stop ${resolveGatewaySystemdServiceName(profile)}.service`,
-      ];
-    case "win32":
-      return [
-        `Tip: ${formatCliCommand("openclaw gateway stop")}`,
-        `Or: schtasks /End /TN "${resolveGatewayWindowsTaskName(profile)}"`,
       ];
     default:
       return [`Tip: ${formatCliCommand("openclaw gateway stop")}`];

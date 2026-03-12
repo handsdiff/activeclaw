@@ -52,12 +52,9 @@ describe("runGatewayUpdate", () => {
 
   async function createStableTagRunner(params: {
     stableTag: string;
-    uiIndexPath: string;
     onDoctor?: () => Promise<void>;
-    onUiBuild?: (count: number) => Promise<void>;
   }) {
     const calls: string[] = [];
-    let uiBuildCount = 0;
     const doctorNodePath = await resolveStableNodePath(process.execPath);
     const doctorKey = `${doctorNodePath} ${path.join(tempDir, "openclaw.mjs")} doctor --non-interactive --fix`;
 
@@ -71,7 +68,7 @@ describe("runGatewayUpdate", () => {
       if (key === `git -C ${tempDir} rev-parse HEAD`) {
         return { stdout: "abc123", stderr: "", code: 0 };
       }
-      if (key === `git -C ${tempDir} status --porcelain -- :!dist/control-ui/`) {
+      if (key === `git -C ${tempDir} status --porcelain`) {
         return { stdout: "", stderr: "", code: 0 };
       }
       if (key === `git -C ${tempDir} fetch --all --prune --tags`) {
@@ -89,11 +86,6 @@ describe("runGatewayUpdate", () => {
       if (key === "pnpm build") {
         return { stdout: "", stderr: "", code: 0 };
       }
-      if (key === "pnpm ui:build") {
-        uiBuildCount += 1;
-        await params.onUiBuild?.(uiBuildCount);
-        return { stdout: "", stderr: "", code: 0 };
-      }
       if (key === doctorKey) {
         await params.onDoctor?.();
         return { stdout: "", stderr: "", code: 0 };
@@ -105,7 +97,6 @@ describe("runGatewayUpdate", () => {
       runCommand,
       calls,
       doctorKey,
-      getUiBuildCount: () => uiBuildCount,
     };
   }
 
@@ -118,13 +109,6 @@ describe("runGatewayUpdate", () => {
     await fs.writeFile(path.join(tempDir, "package.json"), JSON.stringify(pkg), "utf-8");
   }
 
-  async function setupUiIndex() {
-    const uiIndexPath = path.join(tempDir, "dist", "control-ui", "index.html");
-    await fs.mkdir(path.dirname(uiIndexPath), { recursive: true });
-    await fs.writeFile(uiIndexPath, "<html></html>", "utf-8");
-    return uiIndexPath;
-  }
-
   function buildStableTagResponses(
     stableTag: string,
     options?: { additionalTags?: string[] },
@@ -133,7 +117,7 @@ describe("runGatewayUpdate", () => {
     return {
       [`git -C ${tempDir} rev-parse --show-toplevel`]: { stdout: tempDir },
       [`git -C ${tempDir} rev-parse HEAD`]: { stdout: "abc123" },
-      [`git -C ${tempDir} status --porcelain -- :!dist/control-ui/`]: { stdout: "" },
+      [`git -C ${tempDir} status --porcelain`]: { stdout: "" },
       [`git -C ${tempDir} fetch --all --prune --tags`]: { stdout: "" },
       [`git -C ${tempDir} tag --list v* --sort=-v:refname`]: { stdout: `${tagOutput}\n` },
       [`git -C ${tempDir} checkout --detach ${stableTag}`]: { stdout: "" },
@@ -145,14 +129,10 @@ describe("runGatewayUpdate", () => {
       [`git -C ${tempDir} rev-parse --show-toplevel`]: { stdout: tempDir },
       [`git -C ${tempDir} rev-parse HEAD`]: { stdout: "abc123" },
       [`git -C ${tempDir} rev-parse --abbrev-ref HEAD`]: { stdout: options?.branch ?? "main" },
-      [`git -C ${tempDir} status --porcelain -- :!dist/control-ui/`]: {
+      [`git -C ${tempDir} status --porcelain`]: {
         stdout: options?.status ?? "",
       },
     } satisfies Record<string, CommandResponse>;
-  }
-
-  async function removeControlUiAssets() {
-    await fs.rm(path.join(tempDir, "dist", "control-ui"), { recursive: true, force: true });
   }
 
   async function runWithCommand(
@@ -264,7 +244,6 @@ describe("runGatewayUpdate", () => {
     expect(result.status).toBe("error");
     expect(result.reason).toBe("deps-install-failed");
     expect(calls.some((call) => call === "pnpm build")).toBe(false);
-    expect(calls.some((call) => call === "pnpm ui:build")).toBe(false);
   });
 
   it("returns error and stops early when build fails", async () => {
@@ -281,12 +260,10 @@ describe("runGatewayUpdate", () => {
     expect(result.status).toBe("error");
     expect(result.reason).toBe("build-failed");
     expect(calls.some((call) => call === "pnpm install")).toBe(true);
-    expect(calls.some((call) => call === "pnpm ui:build")).toBe(false);
   });
 
   it("uses stable tag when beta tag is older than release", async () => {
     await setupGitCheckout({ packageManager: "pnpm@8.0.0" });
-    await setupUiIndex();
     const stableTag = "v1.0.1-1";
     const betaTag = "v1.0.0-beta.2";
     const doctorNodePath = await resolveStableNodePath(process.execPath);
@@ -294,7 +271,6 @@ describe("runGatewayUpdate", () => {
       ...buildStableTagResponses(stableTag, { additionalTags: [betaTag] }),
       "pnpm install": { stdout: "" },
       "pnpm build": { stdout: "" },
-      "pnpm ui:build": { stdout: "" },
       [`${doctorNodePath} ${path.join(tempDir, "openclaw.mjs")} doctor --non-interactive --fix`]: {
         stdout: "",
       },
@@ -531,7 +507,6 @@ describe("runGatewayUpdate", () => {
       ...buildStableTagResponses(stableTag),
       "pnpm install": { stdout: "" },
       "pnpm build": { stdout: "" },
-      "pnpm ui:build": { stdout: "" },
     });
 
     const result = await runWithRunner(runner, { channel: "stable" });
@@ -541,49 +516,17 @@ describe("runGatewayUpdate", () => {
     expect(result.steps.at(-1)?.name).toBe("openclaw doctor entry");
   });
 
-  it("repairs UI assets when doctor run removes control-ui files", async () => {
+  it("completes successfully after the doctor step", async () => {
     await setupGitCheckout({ packageManager: "pnpm@8.0.0" });
-    const uiIndexPath = await setupUiIndex();
 
     const stableTag = "v1.0.1-1";
-    const { runCommand, calls, doctorKey, getUiBuildCount } = await createStableTagRunner({
+    const { runCommand, calls, doctorKey } = await createStableTagRunner({
       stableTag,
-      uiIndexPath,
-      onUiBuild: async (count) => {
-        await fs.mkdir(path.dirname(uiIndexPath), { recursive: true });
-        await fs.writeFile(uiIndexPath, `<html>${count}</html>`, "utf-8");
-      },
-      onDoctor: removeControlUiAssets,
     });
 
     const result = await runWithCommand(runCommand, { channel: "stable" });
 
     expect(result.status).toBe("ok");
-    expect(getUiBuildCount()).toBe(2);
-    expect(await pathExists(uiIndexPath)).toBe(true);
     expect(calls).toContain(doctorKey);
-  });
-
-  it("fails when UI assets are still missing after post-doctor repair", async () => {
-    await setupGitCheckout({ packageManager: "pnpm@8.0.0" });
-    const uiIndexPath = await setupUiIndex();
-
-    const stableTag = "v1.0.1-1";
-    const { runCommand } = await createStableTagRunner({
-      stableTag,
-      uiIndexPath,
-      onUiBuild: async (count) => {
-        if (count === 1) {
-          await fs.mkdir(path.dirname(uiIndexPath), { recursive: true });
-          await fs.writeFile(uiIndexPath, "<html>built</html>", "utf-8");
-        }
-      },
-      onDoctor: removeControlUiAssets,
-    });
-
-    const result = await runWithCommand(runCommand, { channel: "stable" });
-
-    expect(result.status).toBe("error");
-    expect(result.reason).toBe("ui-assets-missing");
   });
 });

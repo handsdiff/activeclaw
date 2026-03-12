@@ -84,8 +84,6 @@ import {
 } from "./devices.js";
 import {
   ExecApprovalsGetParamsSchema,
-  ExecApprovalsNodeGetParamsSchema,
-  ExecApprovalsNodeSetParamsSchema,
   ExecApprovalsSetParamsSchema,
   ExecApprovalsSnapshotSchema,
   ExecApprovalRequestParamsSchema,
@@ -111,20 +109,6 @@ import {
   LogsTailParamsSchema,
   LogsTailResultSchema,
 } from "./logs-chat.js";
-import {
-  NodeDescribeParamsSchema,
-  NodeEventParamsSchema,
-  NodeInvokeParamsSchema,
-  NodeInvokeResultParamsSchema,
-  NodeInvokeRequestEventSchema,
-  NodeListParamsSchema,
-  NodePairApproveParamsSchema,
-  NodePairListParamsSchema,
-  NodePairRejectParamsSchema,
-  NodePairRequestParamsSchema,
-  NodePairVerifyParamsSchema,
-  NodeRenameParamsSchema,
-} from "./nodes.js";
 import { PushTestParamsSchema, PushTestResultSchema } from "./push.js";
 import {
   SecretsReloadParamsSchema,
@@ -173,18 +157,6 @@ export const ProtocolSchemas = {
   AgentIdentityResult: AgentIdentityResultSchema,
   AgentWaitParams: AgentWaitParamsSchema,
   WakeParams: WakeParamsSchema,
-  NodePairRequestParams: NodePairRequestParamsSchema,
-  NodePairListParams: NodePairListParamsSchema,
-  NodePairApproveParams: NodePairApproveParamsSchema,
-  NodePairRejectParams: NodePairRejectParamsSchema,
-  NodePairVerifyParams: NodePairVerifyParamsSchema,
-  NodeRenameParams: NodeRenameParamsSchema,
-  NodeListParams: NodeListParamsSchema,
-  NodeDescribeParams: NodeDescribeParamsSchema,
-  NodeInvokeParams: NodeInvokeParamsSchema,
-  NodeInvokeResultParams: NodeInvokeResultParamsSchema,
-  NodeEventParams: NodeEventParamsSchema,
-  NodeInvokeRequestEvent: NodeInvokeRequestEventSchema,
   PushTestParams: PushTestParamsSchema,
   PushTestResult: PushTestResultSchema,
   SecretsReloadParams: SecretsReloadParamsSchema,
@@ -265,8 +237,6 @@ export const ProtocolSchemas = {
   LogsTailResult: LogsTailResultSchema,
   ExecApprovalsGetParams: ExecApprovalsGetParamsSchema,
   ExecApprovalsSetParams: ExecApprovalsSetParamsSchema,
-  ExecApprovalsNodeGetParams: ExecApprovalsNodeGetParamsSchema,
-  ExecApprovalsNodeSetParams: ExecApprovalsNodeSetParamsSchema,
   ExecApprovalsSnapshot: ExecApprovalsSnapshotSchema,
   ExecApprovalRequestParams: ExecApprovalRequestParamsSchema,
   ExecApprovalResolveParams: ExecApprovalResolveParamsSchema,

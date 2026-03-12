@@ -1,4 +1,4 @@
-import { fetchWithSsrFGuard } from "openclaw/plugin-sdk";
+import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/compat";
 import { resolveHubAccount } from "./accounts.js";
 import type { CoreConfig, HubProbe } from "./types.js";
 

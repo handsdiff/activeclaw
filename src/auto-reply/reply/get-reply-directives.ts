@@ -22,7 +22,7 @@ import { stripInlineStatus } from "./reply-inline.js";
 import type { TypingController } from "./typing.js";
 
 type AgentDefaults = NonNullable<OpenClawConfig["agents"]>["defaults"];
-type ExecOverrides = Pick<ExecToolDefaults, "host" | "security" | "ask" | "node">;
+type ExecOverrides = Pick<ExecToolDefaults, "host" | "security" | "ask">;
 
 export type ReplyDirectiveContinuation = {
   commandSource: string;
@@ -73,11 +73,10 @@ function resolveExecOverrides(params: {
     params.directives.execSecurity ??
     (params.sessionEntry?.execSecurity as ExecOverrides["security"]);
   const ask = params.directives.execAsk ?? (params.sessionEntry?.execAsk as ExecOverrides["ask"]);
-  const node = params.directives.execNode ?? params.sessionEntry?.execNode;
-  if (!host && !security && !ask && !node) {
+  if (!host && !security && !ask) {
     return undefined;
   }
-  return { host, security, ask, node };
+  return { host, security, ask };
 }
 
 export type ReplyDirectiveResult =

@@ -1,4 +1,4 @@
-import Ajv from "ajv";
+import AjvPkg from "ajv";
 import { describe, expect, it } from "vitest";
 import {
   continuityProofPackSchema,
@@ -75,6 +75,7 @@ function makeProofPackInput() {
 describe("continuity proof pack", () => {
   it("uses the month-1 flat labor rate and validates against the schema", () => {
     const proofPack = generateContinuityProofPack(makeProofPackInput());
+    const Ajv = AjvPkg as unknown as new (opts?: object) => import("ajv").default;
     const ajv = new Ajv({ strict: false });
     const validate = ajv.compile(continuityProofPackSchema);
 

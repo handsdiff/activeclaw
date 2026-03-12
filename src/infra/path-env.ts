@@ -50,24 +50,12 @@ function mergePath(params: { existing: string; prepend?: string[]; append?: stri
 }
 
 function candidateBinDirs(opts: EnsureOpenClawPathOpts): { prepend: string[]; append: string[] } {
-  const execPath = opts.execPath ?? process.execPath;
   const cwd = opts.cwd ?? process.cwd();
   const homeDir = opts.homeDir ?? os.homedir();
   const platform = opts.platform ?? process.platform;
 
   const prepend: string[] = [];
   const append: string[] = [];
-
-  // Bundled macOS app: `openclaw` lives next to the executable (process.execPath).
-  try {
-    const execDir = path.dirname(execPath);
-    const siblingCli = path.join(execDir, "openclaw");
-    if (isExecutable(siblingCli)) {
-      prepend.push(execDir);
-    }
-  } catch {
-    // ignore
-  }
 
   // Project-local installs are a common repo-based attack vector (bin hijacking). Keep this
   // disabled by default; if an operator explicitly enables it, only append (never prepend).
@@ -107,7 +95,7 @@ function candidateBinDirs(opts: EnsureOpenClawPathOpts): { prepend: string[]; ap
 
 /**
  * Best-effort PATH bootstrap so skills that require the `openclaw` CLI can run
- * under launchd/minimal environments (and inside the macOS app bundle).
+ * under minimal service environments.
  */
 export function ensureOpenClawCliOnPath(opts: EnsureOpenClawPathOpts = {}) {
   if (isTruthyEnvValue(process.env.OPENCLAW_PATH_BOOTSTRAPPED)) {

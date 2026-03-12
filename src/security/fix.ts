@@ -6,9 +6,7 @@ import { createConfigIO } from "../config/config.js";
 import { collectIncludePathsRecursive } from "../config/includes-scan.js";
 import { resolveConfigPath, resolveOAuthDir, resolveStateDir } from "../config/paths.js";
 import { readChannelAllowFromStore } from "../pairing/pairing-store.js";
-import { runExec } from "../process/exec.js";
 import { DEFAULT_ACCOUNT_ID, normalizeAgentId } from "../routing/session-key.js";
-import { createIcaclsResetCommand, formatIcaclsResetCommand, type ExecFn } from "./windows-acl.js";
 
 export type SecurityFixChmodAction = {
   kind: "chmod";
@@ -19,16 +17,7 @@ export type SecurityFixChmodAction = {
   error?: string;
 };
 
-export type SecurityFixIcaclsAction = {
-  kind: "icacls";
-  path: string;
-  command: string;
-  ok: boolean;
-  skipped?: string;
-  error?: string;
-};
-
-export type SecurityFixAction = SecurityFixChmodAction | SecurityFixIcaclsAction;
+export type SecurityFixAction = SecurityFixChmodAction;
 
 export type SecurityFixResult = {
   ok: boolean;
@@ -101,82 +90,6 @@ async function safeChmod(params: {
       kind: "chmod",
       path: params.path,
       mode: params.mode,
-      ok: false,
-      error: String(err),
-    };
-  }
-}
-
-async function safeAclReset(params: {
-  path: string;
-  require: "dir" | "file";
-  env: NodeJS.ProcessEnv;
-  exec?: ExecFn;
-}): Promise<SecurityFixIcaclsAction> {
-  const display = formatIcaclsResetCommand(params.path, {
-    isDir: params.require === "dir",
-    env: params.env,
-  });
-  try {
-    const st = await fs.lstat(params.path);
-    if (st.isSymbolicLink()) {
-      return {
-        kind: "icacls",
-        path: params.path,
-        command: display,
-        ok: false,
-        skipped: "symlink",
-      };
-    }
-    if (params.require === "dir" && !st.isDirectory()) {
-      return {
-        kind: "icacls",
-        path: params.path,
-        command: display,
-        ok: false,
-        skipped: "not-a-directory",
-      };
-    }
-    if (params.require === "file" && !st.isFile()) {
-      return {
-        kind: "icacls",
-        path: params.path,
-        command: display,
-        ok: false,
-        skipped: "not-a-file",
-      };
-    }
-    const cmd = createIcaclsResetCommand(params.path, {
-      isDir: st.isDirectory(),
-      env: params.env,
-    });
-    if (!cmd) {
-      return {
-        kind: "icacls",
-        path: params.path,
-        command: display,
-        ok: false,
-        skipped: "missing-user",
-      };
-    }
-    const exec = params.exec ?? runExec;
-    await exec(cmd.command, cmd.args);
-    return { kind: "icacls", path: params.path, command: cmd.display, ok: true };
-  } catch (err) {
-    const code = (err as { code?: string }).code;
-    if (code === "ENOENT") {
-      return {
-        kind: "icacls",
-        path: params.path,
-        command: display,
-        ok: false,
-        skipped: "missing",
-      };
-    }
-    return {
-      kind: "icacls",
-      path: params.path,
-      command: display,
       ok: false,
       error: String(err),
     };
@@ -389,12 +302,9 @@ export async function fixSecurityFootguns(opts?: {
   stateDir?: string;
   configPath?: string;
   platform?: NodeJS.Platform;
-  exec?: ExecFn;
 }): Promise<SecurityFixResult> {
   const env = opts?.env ?? process.env;
-  const platform = opts?.platform ?? process.platform;
-  const exec = opts?.exec ?? runExec;
-  const isWindows = platform === "win32";
+  void opts?.platform;
   const stateDir = opts?.stateDir ?? resolveStateDir(env);
   const configPath = opts?.configPath ?? resolveConfigPath(env, stateDir);
   const actions: SecurityFixAction[] = [];
@@ -437,9 +347,7 @@ export async function fixSecurityFootguns(opts?: {
   }
 
   const applyPerms = (params: { path: string; mode: number; require: "dir" | "file" }) =>
-    isWindows
-      ? safeAclReset({ path: params.path, require: params.require, env, exec })
-      : safeChmod({ path: params.path, mode: params.mode, require: params.require });
+    safeChmod({ path: params.path, mode: params.mode, require: params.require });
 
   actions.push(await applyPerms({ path: stateDir, mode: 0o700, require: "dir" }));
   actions.push(await applyPerms({ path: configPath, mode: 0o600, require: "file" }));

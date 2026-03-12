@@ -36,7 +36,7 @@ Manual steps (same result):
 openclaw gateway stop
 ```
 
-2. Uninstall the gateway service (launchd/systemd/schtasks):
+2. Uninstall the gateway service (launchd/systemd):
 
 ```bash
 openclaw gateway uninstall
@@ -62,12 +62,6 @@ rm -rf ~/.openclaw/workspace
 npm rm -g openclaw
 pnpm remove -g openclaw
 bun remove -g openclaw
-```
-
-6. If you installed the macOS app:
-
-```bash
-rm -rf /Applications/OpenClaw.app
 ```
 
 Notes:
@@ -100,23 +94,11 @@ rm -f ~/.config/systemd/user/openclaw-gateway.service
 systemctl --user daemon-reload
 ```
 
-### Windows (Scheduled Task)
-
-Default task name is `OpenClaw Gateway` (or `OpenClaw Gateway (<profile>)`).
-The task script lives under your state dir.
-
-```powershell
-schtasks /Delete /F /TN "OpenClaw Gateway"
-Remove-Item -Force "$env:USERPROFILE\.openclaw\gateway.cmd"
-```
-
-If you used a profile, delete the matching task name and `~\.openclaw-<profile>\gateway.cmd`.
-
 ## Normal install vs source checkout
 
 ### Normal install (install.sh / npm / pnpm / bun)
 
-If you used `https://openclaw.ai/install.sh` or `install.ps1`, the CLI was installed with `npm install -g openclaw@latest`.
+If you used `https://openclaw.ai/install.sh`, the CLI was installed with `npm install -g openclaw@latest`.
 Remove it with `npm rm -g openclaw` (or `pnpm remove -g` / `bun remove -g` if you installed that way).
 
 ### Source checkout (git clone)

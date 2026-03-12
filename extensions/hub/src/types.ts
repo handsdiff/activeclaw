@@ -1,5 +1,4 @@
-import type { BaseProbeResult } from "openclaw/plugin-sdk";
-import type { DmPolicy, OpenClawConfig } from "openclaw/plugin-sdk";
+import type { BaseProbeResult, DmPolicy, OpenClawConfig } from "openclaw/plugin-sdk/compat";
 
 export type HubAccountConfig = {
   name?: string;

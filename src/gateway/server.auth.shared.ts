@@ -127,13 +127,6 @@ const TRUSTED_PROXY_CONTROL_UI_HEADERS = {
   "x-forwarded-user": "peter@example.com",
 } as const;
 
-const NODE_CLIENT = {
-  id: GATEWAY_CLIENT_NAMES.NODE_HOST,
-  version: "1.0.0",
-  platform: "test",
-  mode: GATEWAY_CLIENT_MODES.NODE,
-};
-
 const BACKEND_GATEWAY_CLIENT = {
   id: GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT,
   version: "1.0.0",
@@ -367,7 +360,6 @@ export {
   getFreePort,
   getTrackedConnectChallengeNonce,
   installGatewayTestHooks,
-  NODE_CLIENT,
   onceMessage,
   openTailscaleWs,
   openWs,

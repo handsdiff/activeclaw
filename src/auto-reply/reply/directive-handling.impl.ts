@@ -31,7 +31,7 @@ function resolveExecDefaults(params: {
   cfg: OpenClawConfig;
   sessionEntry?: SessionEntry;
   agentId?: string;
-}): { host: ExecHost; security: ExecSecurity; ask: ExecAsk; node?: string } {
+}): { host: ExecHost; security: ExecSecurity; ask: ExecAsk } {
   const globalExec = params.cfg.tools?.exec;
   const agentExec = params.agentId
     ? resolveAgentConfig(params.cfg, params.agentId)?.tools?.exec
@@ -52,7 +52,6 @@ function resolveExecDefaults(params: {
       (agentExec?.ask as ExecAsk | undefined) ??
       (globalExec?.ask as ExecAsk | undefined) ??
       "on-miss",
-    node: params.sessionEntry?.execNode ?? agentExec?.node ?? globalExec?.node,
   };
 }
 
@@ -206,7 +205,7 @@ export async function handleDirectiveOnly(
   if (directives.hasExecDirective) {
     if (directives.invalidExecHost) {
       return {
-        text: `Unrecognized exec host "${directives.rawExecHost ?? ""}". Valid hosts: sandbox, gateway, node.`,
+        text: `Unrecognized exec host "${directives.rawExecHost ?? ""}". Valid hosts: sandbox, gateway.`,
       };
     }
     if (directives.invalidExecSecurity) {
@@ -219,22 +218,16 @@ export async function handleDirectiveOnly(
         text: `Unrecognized exec ask "${directives.rawExecAsk ?? ""}". Valid: off, on-miss, always.`,
       };
     }
-    if (directives.invalidExecNode) {
-      return {
-        text: "Exec node requires a value.",
-      };
-    }
     if (!directives.hasExecOptions) {
       const execDefaults = resolveExecDefaults({
         cfg: params.cfg,
         sessionEntry,
         agentId: activeAgentId,
       });
-      const nodeLabel = execDefaults.node ? `node=${execDefaults.node}` : "node=(unset)";
       return {
         text: withOptions(
-          `Current exec defaults: host=${execDefaults.host}, security=${execDefaults.security}, ask=${execDefaults.ask}, ${nodeLabel}.`,
-          "host=sandbox|gateway|node, security=deny|allowlist|full, ask=off|on-miss|always, node=<id>",
+          `Current exec defaults: host=${execDefaults.host}, security=${execDefaults.security}, ask=${execDefaults.ask}.`,
+          "host=sandbox|gateway, security=deny|allowlist|full, ask=off|on-miss|always",
         ),
       };
     }
@@ -317,9 +310,6 @@ export async function handleDirectiveOnly(
     }
     if (directives.execAsk) {
       sessionEntry.execAsk = directives.execAsk;
-    }
-    if (directives.execNode) {
-      sessionEntry.execNode = directives.execNode;
     }
   }
   if (modelSelection) {
@@ -420,9 +410,6 @@ export async function handleDirectiveOnly(
     }
     if (directives.execAsk) {
       execParts.push(`ask=${directives.execAsk}`);
-    }
-    if (directives.execNode) {
-      execParts.push(`node=${directives.execNode}`);
     }
     if (execParts.length > 0) {
       parts.push(formatDirectiveAck(`Exec defaults set (${execParts.join(", ")}).`));

@@ -1,21 +1,13 @@
 // Default service labels (canonical + legacy compatibility)
 export const GATEWAY_LAUNCH_AGENT_LABEL = "ai.openclaw.gateway";
 export const GATEWAY_SYSTEMD_SERVICE_NAME = "openclaw-gateway";
-export const GATEWAY_WINDOWS_TASK_NAME = "OpenClaw Gateway";
 export const GATEWAY_SERVICE_MARKER = "openclaw";
 export const GATEWAY_SERVICE_KIND = "gateway";
-export const NODE_LAUNCH_AGENT_LABEL = "ai.openclaw.node";
-export const NODE_SYSTEMD_SERVICE_NAME = "openclaw-node";
-export const NODE_WINDOWS_TASK_NAME = "OpenClaw Node";
-export const NODE_SERVICE_MARKER = "openclaw";
-export const NODE_SERVICE_KIND = "node";
-export const NODE_WINDOWS_TASK_SCRIPT_NAME = "node.cmd";
 export const LEGACY_GATEWAY_LAUNCH_AGENT_LABELS: string[] = [];
 export const LEGACY_GATEWAY_SYSTEMD_SERVICE_NAMES: string[] = [
   "clawdbot-gateway",
   "moltbot-gateway",
 ];
-export const LEGACY_GATEWAY_WINDOWS_TASK_NAMES: string[] = [];
 
 export function normalizeGatewayProfile(profile?: string): string | null {
   const trimmed = profile?.trim();
@@ -51,14 +43,6 @@ export function resolveGatewaySystemdServiceName(profile?: string): string {
   return `openclaw-gateway${suffix}`;
 }
 
-export function resolveGatewayWindowsTaskName(profile?: string): string {
-  const normalized = normalizeGatewayProfile(profile);
-  if (!normalized) {
-    return GATEWAY_WINDOWS_TASK_NAME;
-  }
-  return `OpenClaw Gateway (${normalized})`;
-}
-
 export function formatGatewayServiceDescription(params?: {
   profile?: string;
   version?: string;
@@ -90,24 +74,4 @@ export function resolveGatewayServiceDescription(params: {
       version: params.environment?.OPENCLAW_SERVICE_VERSION ?? params.env.OPENCLAW_SERVICE_VERSION,
     })
   );
-}
-
-export function resolveNodeLaunchAgentLabel(): string {
-  return NODE_LAUNCH_AGENT_LABEL;
-}
-
-export function resolveNodeSystemdServiceName(): string {
-  return NODE_SYSTEMD_SERVICE_NAME;
-}
-
-export function resolveNodeWindowsTaskName(): string {
-  return NODE_WINDOWS_TASK_NAME;
-}
-
-export function formatNodeServiceDescription(params?: { version?: string }): string {
-  const version = params?.version?.trim();
-  if (!version) {
-    return "OpenClaw Node Host";
-  }
-  return `OpenClaw Node Host (v${version})`;
 }

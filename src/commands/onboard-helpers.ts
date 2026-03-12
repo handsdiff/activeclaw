@@ -9,11 +9,9 @@ import { CONFIG_PATH } from "../config/config.js";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions.js";
 import { callGateway } from "../gateway/call.js";
-import { normalizeControlUiBasePath } from "../gateway/control-ui-shared.js";
 import { pickPrimaryLanIPv4, isValidIPv4 } from "../gateway/net.js";
 import { isSafeExecutableValue } from "../infra/exec-safety.js";
 import { pickPrimaryTailnetIPv4 } from "../infra/tailnet.js";
-import { isWSL } from "../infra/wsl.js";
 import { runCommandWithTimeout } from "../process/exec.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { stylePromptTitle } from "../terminal/prompt-style.js";
@@ -139,11 +137,6 @@ type BrowserOpenCommand = {
   argv: string[] | null;
   reason?: string;
   command?: string;
-  /**
-   * Whether the URL must be wrapped in quotes when appended to argv.
-   * Needed for Windows `cmd /c start` where `&` splits commands.
-   */
-  quoteUrl?: boolean;
 };
 
 export async function resolveBrowserOpenCommand(): Promise<BrowserOpenCommand> {
@@ -154,16 +147,8 @@ export async function resolveBrowserOpenCommand(): Promise<BrowserOpenCommand> {
     Boolean(process.env.SSH_TTY) ||
     Boolean(process.env.SSH_CONNECTION);
 
-  if (isSsh && !hasDisplay && platform !== "win32") {
+  if (isSsh && !hasDisplay) {
     return { argv: null, reason: "ssh-no-display" };
-  }
-
-  if (platform === "win32") {
-    return {
-      argv: ["cmd", "/c", "start", ""],
-      command: "cmd",
-      quoteUrl: true,
-    };
   }
 
   if (platform === "darwin") {
@@ -172,18 +157,8 @@ export async function resolveBrowserOpenCommand(): Promise<BrowserOpenCommand> {
   }
 
   if (platform === "linux") {
-    const wsl = await isWSL();
-    if (!hasDisplay && !wsl) {
+    if (!hasDisplay) {
       return { argv: null, reason: "no-display" };
-    }
-    if (wsl) {
-      const hasWslview = await detectBinary("wslview");
-      if (hasWslview) {
-        return { argv: ["wslview"], command: "wslview" };
-      }
-      if (!hasDisplay) {
-        return { argv: null, reason: "wsl-no-wslview" };
-      }
     }
     const hasXdgOpen = await detectBinary("xdg-open");
     return hasXdgOpen
@@ -202,14 +177,8 @@ export async function detectBrowserOpenSupport(): Promise<BrowserOpenSupport> {
   return { ok: true, command: resolved.command };
 }
 
-export function formatControlUiSshHint(params: {
-  port: number;
-  basePath?: string;
-  token?: string;
-}): string {
-  const basePath = normalizeControlUiBasePath(params.basePath);
-  const uiPath = basePath ? `${basePath}/` : "/";
-  const localUrl = `http://localhost:${params.port}${uiPath}`;
+export function formatControlUiSshHint(params: { port: number; token?: string }): string {
+  const localUrl = `http://localhost:${params.port}/`;
   const authedUrl = params.token
     ? `${localUrl}#token=${encodeURIComponent(params.token)}`
     : undefined;
@@ -222,7 +191,6 @@ export function formatControlUiSshHint(params: {
     authedUrl,
     "Docs:",
     "https://docs.openclaw.ai/gateway/remote",
-    "https://docs.openclaw.ai/web/control-ui",
   ]
     .filter(Boolean)
     .join("\n");
@@ -243,21 +211,11 @@ export async function openUrl(url: string): Promise<boolean> {
   if (!resolved.argv) {
     return false;
   }
-  const quoteUrl = resolved.quoteUrl === true;
   const command = [...resolved.argv];
-  if (quoteUrl) {
-    if (command.at(-1) === "") {
-      // Preserve the empty title token for `start` when using verbatim args.
-      command[command.length - 1] = '""';
-    }
-    command.push(`"${url}"`);
-  } else {
-    command.push(url);
-  }
+  command.push(url);
   try {
     await runCommandWithTimeout(command, {
       timeoutMs: 5_000,
-      windowsVerbatimArguments: quoteUrl,
     });
     return true;
   } catch {
@@ -363,7 +321,7 @@ export async function detectBinary(name: string): Promise<boolean> {
     }
   }
 
-  const command = process.platform === "win32" ? ["where", name] : ["/usr/bin/env", "which", name];
+  const command = ["/usr/bin/env", "which", name];
   try {
     const result = await runCommandWithTimeout(command, { timeoutMs: 2000 });
     return result.code === 0 && result.stdout.trim().length > 0;
@@ -460,7 +418,6 @@ export function resolveControlUiLinks(params: {
   port: number;
   bind?: "auto" | "lan" | "loopback" | "custom" | "tailnet";
   customBindHost?: string;
-  basePath?: string;
 }): { httpUrl: string; wsUrl: string } {
   const port = params.port;
   const bind = params.bind ?? "loopback";
@@ -478,11 +435,8 @@ export function resolveControlUiLinks(params: {
     }
     return "127.0.0.1";
   })();
-  const basePath = normalizeControlUiBasePath(params.basePath);
-  const uiPath = basePath ? `${basePath}/` : "/";
-  const wsPath = basePath ? basePath : "";
   return {
-    httpUrl: `http://${host}:${port}${uiPath}`,
-    wsUrl: `ws://${host}:${port}${wsPath}`,
+    httpUrl: `http://${host}:${port}/`,
+    wsUrl: `ws://${host}:${port}`,
   };
 }

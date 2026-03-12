@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 
 const SECRET_TARGET_CALLSITES = [
   "src/cli/memory-cli.ts",
-  "src/cli/qr-cli.ts",
   "src/commands/agent.ts",
   "src/commands/channels/resolve.ts",
   "src/commands/channels/shared.ts",

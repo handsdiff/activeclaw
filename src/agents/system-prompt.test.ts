@@ -73,14 +73,14 @@ describe("buildAgentSystemPrompt", () => {
       workspaceDir: "/tmp/openclaw",
       ownerNumbers: ["+123"],
       ownerDisplay: "hash",
-      ownerDisplaySecret: "secret-key-A",
+      ownerDisplaySecret: "secret-key-A", // pragma: allowlist secret
     });
 
     const secretB = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
       ownerNumbers: ["+123"],
       ownerDisplay: "hash",
-      ownerDisplaySecret: "secret-key-B",
+      ownerDisplaySecret: "secret-key-B", // pragma: allowlist secret
     });
 
     const lineA = secretA.split("## Authorized Senders")[1]?.split("\n")[1];
@@ -137,6 +137,9 @@ describe("buildAgentSystemPrompt", () => {
 
     expect(prompt).toContain("## Skills (mandatory)");
     expect(prompt).toContain("<available_skills>");
+    expect(prompt).toContain(
+      "When a skill drives external API writes, assume rate limits: prefer fewer larger writes, avoid tight one-item loops, serialize bursts when possible, and respect 429/Retry-After.",
+    );
   });
 
   it("omits skills in minimal prompt mode when skillsPrompt is absent", () => {
@@ -535,6 +538,18 @@ describe("buildAgentSystemPrompt", () => {
     });
 
     expect(prompt).toContain("SOUL.md is your identity. Embody it completely");
+  });
+
+  it("renders bootstrap truncation warning even when no context files are injected", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      bootstrapTruncationWarningLines: ["AGENTS.md: 200 raw -> 0 injected"],
+      contextFiles: [],
+    });
+
+    expect(prompt).toContain("# Project Context");
+    expect(prompt).toContain("⚠ Bootstrap truncation warning:");
+    expect(prompt).toContain("- AGENTS.md: 200 raw -> 0 injected");
   });
 
   it("renders bootstrap truncation warning even when no context files are injected", () => {

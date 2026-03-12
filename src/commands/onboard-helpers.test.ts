@@ -36,12 +36,29 @@ afterEach(() => {
 });
 
 describe("openUrl", () => {
-  it("quotes URLs on win32 so '&' is not treated as cmd separator", async () => {
-    vi.stubEnv("VITEST", "");
-    vi.stubEnv("NODE_ENV", "");
-    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+  it("opens URLs with xdg-open on linux", async () => {
     vi.stubEnv("VITEST", "");
     vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("DISPLAY", ":0");
+    vi.stubEnv("SSH_CLIENT", "");
+    vi.stubEnv("SSH_TTY", "");
+    vi.stubEnv("SSH_CONNECTION", "");
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    mocks.runCommandWithTimeout
+      .mockResolvedValueOnce({
+        stdout: "/usr/bin/xdg-open\n",
+        stderr: "",
+        code: 0,
+        signal: null,
+        killed: false,
+      })
+      .mockResolvedValueOnce({
+        stdout: "",
+        stderr: "",
+        code: 0,
+        signal: null,
+        killed: false,
+      });
 
     const url =
       "https://accounts.google.com/o/oauth2/v2/auth?client_id=abc&response_type=code&redirect_uri=http%3A%2F%2Flocalhost";
@@ -49,13 +66,15 @@ describe("openUrl", () => {
     const ok = await openUrl(url);
     expect(ok).toBe(true);
 
-    expect(mocks.runCommandWithTimeout).toHaveBeenCalledTimes(1);
-    const [argv, options] = mocks.runCommandWithTimeout.mock.calls[0] ?? [];
-    expect(argv?.slice(0, 4)).toEqual(["cmd", "/c", "start", '""']);
-    expect(argv?.at(-1)).toBe(`"${url}"`);
+    expect(mocks.runCommandWithTimeout).toHaveBeenCalledTimes(2);
+    const [detectArgv, detectOptions] = mocks.runCommandWithTimeout.mock.calls[0] ?? [];
+    expect(detectArgv).toEqual(["/usr/bin/env", "which", "xdg-open"]);
+    expect(detectOptions).toMatchObject({ timeoutMs: 2_000 });
+
+    const [argv, options] = mocks.runCommandWithTimeout.mock.calls[1] ?? [];
+    expect(argv).toEqual(["xdg-open", url]);
     expect(options).toMatchObject({
       timeoutMs: 5_000,
-      windowsVerbatimArguments: true,
     });
 
     platformSpy.mockRestore();
@@ -63,11 +82,14 @@ describe("openUrl", () => {
 });
 
 describe("resolveBrowserOpenCommand", () => {
-  it("marks win32 commands as quoteUrl=true", async () => {
+  it("reports unsupported platforms", async () => {
+    vi.stubEnv("DISPLAY", ":0");
+    vi.stubEnv("SSH_CLIENT", "");
+    vi.stubEnv("SSH_TTY", "");
+    vi.stubEnv("SSH_CONNECTION", "");
     const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
     const resolved = await resolveBrowserOpenCommand();
-    expect(resolved.argv).toEqual(["cmd", "/c", "start", ""]);
-    expect(resolved.quoteUrl).toBe(true);
+    expect(resolved).toEqual({ argv: null, reason: "unsupported-platform" });
     platformSpy.mockRestore();
   });
 });

@@ -1,7 +1,6 @@
 import process from "node:process";
 import type { TelegramNetworkConfig } from "../config/types.telegram.js";
 import { isTruthyEnvValue } from "../infra/env.js";
-import { isWSL2Sync } from "../infra/wsl.js";
 
 export const TELEGRAM_DISABLE_AUTO_SELECT_FAMILY_ENV =
   "OPENCLAW_TELEGRAM_DISABLE_AUTO_SELECT_FAMILY";
@@ -12,16 +11,6 @@ export type TelegramAutoSelectFamilyDecision = {
   value: boolean | null;
   source?: string;
 };
-
-let wsl2SyncCache: boolean | undefined;
-
-function isWSL2SyncCached(): boolean {
-  if (typeof wsl2SyncCache === "boolean") {
-    return wsl2SyncCache;
-  }
-  wsl2SyncCache = isWSL2Sync();
-  return wsl2SyncCache;
-}
 
 export type TelegramDnsResultOrderDecision = {
   value: string | null;
@@ -47,10 +36,6 @@ export function resolveTelegramAutoSelectFamilyDecision(params?: {
   }
   if (typeof params?.network?.autoSelectFamily === "boolean") {
     return { value: params.network.autoSelectFamily, source: "config" };
-  }
-  // WSL2 has unstable IPv6 connectivity; disable autoSelectFamily to use IPv4 directly
-  if (isWSL2SyncCached()) {
-    return { value: false, source: "default-wsl2" };
   }
   if (Number.isFinite(nodeMajor) && nodeMajor >= 22) {
     return { value: true, source: "default-node22" };
@@ -102,5 +87,5 @@ export function resolveTelegramDnsResultOrderDecision(params?: {
 }
 
 export function resetTelegramNetworkConfigStateForTests(): void {
-  wsl2SyncCache = undefined;
+  // Reserved for future memoized platform/network state.
 }

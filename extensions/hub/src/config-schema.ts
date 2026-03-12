@@ -1,4 +1,4 @@
-import { DmPolicySchema, requireOpenAllowFrom } from "openclaw/plugin-sdk";
+import { DmPolicySchema, requireOpenAllowFrom } from "openclaw/plugin-sdk/compat";
 import { z } from "zod";
 
 export const HubAccountSchemaBase = z

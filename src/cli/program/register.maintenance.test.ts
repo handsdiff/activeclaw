@@ -2,7 +2,6 @@ import { Command } from "commander";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const doctorCommand = vi.fn();
-const dashboardCommand = vi.fn();
 const resetCommand = vi.fn();
 const uninstallCommand = vi.fn();
 
@@ -14,10 +13,6 @@ const runtime = {
 
 vi.mock("../../commands/doctor.js", () => ({
   doctorCommand,
-}));
-
-vi.mock("../../commands/dashboard.js", () => ({
-  dashboardCommand,
 }));
 
 vi.mock("../../commands/reset.js", () => ({
@@ -87,19 +82,6 @@ describe("registerMaintenanceCommands doctor action", () => {
     );
   });
 
-  it("passes noOpen to dashboard command", async () => {
-    dashboardCommand.mockResolvedValue(undefined);
-
-    await runMaintenanceCli(["dashboard", "--no-open"]);
-
-    expect(dashboardCommand).toHaveBeenCalledWith(
-      runtime,
-      expect.objectContaining({
-        noOpen: true,
-      }),
-    );
-  });
-
   it("passes reset options to reset command", async () => {
     resetCommand.mockResolvedValue(undefined);
 
@@ -131,7 +113,6 @@ describe("registerMaintenanceCommands doctor action", () => {
       "--service",
       "--state",
       "--workspace",
-      "--app",
       "--all",
       "--yes",
       "--non-interactive",
@@ -144,21 +125,11 @@ describe("registerMaintenanceCommands doctor action", () => {
         service: true,
         state: true,
         workspace: true,
-        app: true,
         all: true,
         yes: true,
         nonInteractive: true,
         dryRun: true,
       }),
     );
-  });
-
-  it("exits with code 1 when dashboard fails", async () => {
-    dashboardCommand.mockRejectedValue(new Error("dashboard failed"));
-
-    await runMaintenanceCli(["dashboard"]);
-
-    expect(runtime.error).toHaveBeenCalledWith("Error: dashboard failed");
-    expect(runtime.exit).toHaveBeenCalledWith(1);
   });
 });

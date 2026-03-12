@@ -22,8 +22,8 @@ Background sessions are scoped per agent; `process` only sees sessions from the 
 - `timeout` (seconds, default 1800): kill on expiry
 - `pty` (bool): run in a pseudo-terminal when available (TTY-only CLIs, coding agents, terminal UIs)
 - `host` (`sandbox | gateway | node`): where to execute
-- `security` (`deny | allowlist | full`): enforcement mode for `gateway`/`node`
-- `ask` (`off | on-miss | always`): approval prompts for `gateway`/`node`
+- `security` (`deny | allowlist | full`): enforcement mode for host execution
+- `ask` (`off | on-miss | always`): approval prompts for host execution
 - `node` (string): node id/name for `host=node`
 - `elevated` (bool): request elevated mode (gateway host); `security=full` is only forced when elevated resolves to `full`
 
@@ -31,13 +31,10 @@ Notes:
 
 - `host` defaults to `sandbox`.
 - `elevated` is ignored when sandboxing is off (exec already runs on the host).
-- `gateway`/`node` approvals are controlled by `~/.openclaw/exec-approvals.json`.
-- `node` requires a paired node (companion app or headless node host).
+- Host approvals are controlled by `~/.openclaw/exec-approvals.json`.
 - If multiple nodes are available, set `exec.node` or `tools.exec.node` to select one.
-- On non-Windows hosts, exec uses `SHELL` when set; if `SHELL` is `fish`, it prefers `bash` (or `sh`)
+- On supported hosts, exec uses `SHELL` when set; if `SHELL` is `fish`, it prefers `bash` (or `sh`)
   from `PATH` to avoid fish-incompatible scripts, then falls back to `SHELL` if neither exists.
-- On Windows hosts, exec prefers PowerShell 7 (`pwsh`) discovery (Program Files, ProgramW6432, then PATH),
-  then falls back to Windows PowerShell 5.1.
 - Host execution (`gateway`/`node`) rejects `env.PATH` and loader overrides (`LD_*`/`DYLD_*`) to
   prevent binary hijacking or injected code.
 - OpenClaw sets `OPENCLAW_SHELL=exec` in the spawned command environment (including PTY and sandbox execution) so shell/profile rules can detect exec-tool context.
@@ -53,7 +50,7 @@ Notes:
 - `tools.exec.notifyOnExit` (default: true): when true, backgrounded exec sessions enqueue a system event and request a heartbeat on exit.
 - `tools.exec.approvalRunningNoticeMs` (default: 10000): emit a single “running” notice when an approval-gated exec runs longer than this (0 disables).
 - `tools.exec.host` (default: `sandbox`)
-- `tools.exec.security` (default: `deny` for sandbox, `allowlist` for gateway + node when unset)
+- `tools.exec.security` (default: `deny` for sandbox, `allowlist` for host execution when unset)
 - `tools.exec.ask` (default: `on-miss`)
 - `tools.exec.node` (default: unset)
 - `tools.exec.pathPrepend`: list of directories to prepend to `PATH` for exec runs (gateway + sandbox only).
@@ -82,9 +79,6 @@ Example:
 - `host=sandbox`: runs `sh -lc` (login shell) inside the container, so `/etc/profile` may reset `PATH`.
   OpenClaw prepends `env.PATH` after profile sourcing via an internal env var (no shell interpolation);
   `tools.exec.pathPrepend` applies here too.
-- `host=node`: only non-blocked env overrides you pass are sent to the node. `env.PATH` overrides are
-  rejected for host execution and ignored by node hosts. If you need additional PATH entries on a node,
-  configure the node host service environment (systemd/launchd) or install tools in standard locations.
 
 Per-agent node binding (use the agent list index in config):
 
@@ -92,8 +86,6 @@ Per-agent node binding (use the agent list index in config):
 openclaw config get agents.list
 openclaw config set agents.list[0].tools.exec.node "node-id-or-name"
 ```
-
-Control UI: the Nodes tab includes a small “Exec node binding” panel for the same settings.
 
 ## Session overrides (`/exec`)
 
@@ -113,9 +105,9 @@ It updates **session state only** and does not write config. To hard-disable exe
 policy (`tools.deny: ["exec"]` or per-agent). Host approvals still apply unless you explicitly set
 `security=full` and `ask=off`.
 
-## Exec approvals (companion app / node host)
+## Exec approvals
 
-Sandboxed agents can require per-request approval before `exec` runs on the gateway or node host.
+Sandboxed agents can require per-request approval before `exec` runs on the gateway.
 See [Exec approvals](/tools/exec-approvals) for the policy, allowlist, and UI flow.
 
 When approvals are required, the exec tool returns immediately with

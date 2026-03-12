@@ -244,35 +244,3 @@ export async function resolveGatewayProgramArguments(params: {
     nodePath: params.nodePath,
   });
 }
-
-export async function resolveNodeProgramArguments(params: {
-  host: string;
-  port: number;
-  tls?: boolean;
-  tlsFingerprint?: string;
-  nodeId?: string;
-  displayName?: string;
-  dev?: boolean;
-  runtime?: GatewayRuntimePreference;
-  nodePath?: string;
-}): Promise<GatewayProgramArgs> {
-  const args = ["node", "run", "--host", params.host, "--port", String(params.port)];
-  if (params.tls || params.tlsFingerprint) {
-    args.push("--tls");
-  }
-  if (params.tlsFingerprint) {
-    args.push("--tls-fingerprint", params.tlsFingerprint);
-  }
-  if (params.nodeId) {
-    args.push("--node-id", params.nodeId);
-  }
-  if (params.displayName) {
-    args.push("--display-name", params.displayName);
-  }
-  return resolveCliProgramArguments({
-    args,
-    dev: params.dev,
-    runtime: params.runtime,
-    nodePath: params.nodePath,
-  });
-}

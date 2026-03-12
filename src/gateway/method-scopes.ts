@@ -19,12 +19,7 @@ export const CLI_DEFAULT_OPERATOR_SCOPES: OperatorScope[] = [
   PAIRING_SCOPE,
 ];
 
-const NODE_ROLE_METHODS = new Set([
-  "node.invoke.result",
-  "node.event",
-  "node.canvas.capability.refresh",
-  "skills.bins",
-]);
+const NODE_ROLE_METHODS = new Set(["skills.bins"]);
 
 const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
   [APPROVALS_SCOPE]: [
@@ -33,18 +28,12 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "exec.approval.resolve",
   ],
   [PAIRING_SCOPE]: [
-    "node.pair.request",
-    "node.pair.list",
-    "node.pair.approve",
-    "node.pair.reject",
-    "node.pair.verify",
     "device.pair.list",
     "device.pair.approve",
     "device.pair.reject",
     "device.pair.remove",
     "device.token.rotate",
     "device.token.revoke",
-    "node.rename",
   ],
   [READ_SCOPE]: [
     "health",
@@ -61,7 +50,6 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "agents.list",
     "agent.identity.get",
     "skills.status",
-    "voicewake.get",
     "sessions.list",
     "sessions.get",
     "sessions.preview",
@@ -74,8 +62,6 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "cron.runs",
     "system-presence",
     "last-heartbeat",
-    "node.list",
-    "node.describe",
     "chat.history",
     "config.get",
     "config.schema.lookup",
@@ -94,12 +80,9 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "tts.disable",
     "tts.convert",
     "tts.setProvider",
-    "voicewake.set",
-    "node.invoke",
     "chat.send",
     "chat.abort",
     "browser.request",
-    "push.test",
   ],
   [ADMIN_SCOPE]: [
     "channels.logout",

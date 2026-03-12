@@ -27,12 +27,12 @@ async function main() {
 
   await waitOpen();
 
-  // Match iOS "operator" session defaults: token auth, no device identity.
+  // Emulate a generic operator UI client: token auth, no device identity.
   const connectRes = await request("connect", {
     minProtocol: 3,
     maxProtocol: 3,
     client: {
-      id: "openclaw-ios",
+      id: "openclaw-web",
       displayName: "openclaw gateway smoke test",
       version: "dev",
       platform: "dev",

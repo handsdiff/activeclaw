@@ -9,7 +9,6 @@ import {
   getHandshakeTimeoutMs,
   GATEWAY_CLIENT_MODES,
   GATEWAY_CLIENT_NAMES,
-  NODE_CLIENT,
   onceMessage,
   openWs,
   PROTOCOL_VERSION,
@@ -94,7 +93,7 @@ export function registerDefaultAuthTokenSuite(): void {
     });
 
     test("connect (req) handshake returns hello-ok payload", async () => {
-      const { CONFIG_PATH, STATE_DIR } = await import("../config/config.js");
+      const { STATE_DIR, createConfigIO } = await import("../config/config.js");
       const ws = await openWs(port);
 
       const res = await connectReq(ws);
@@ -106,7 +105,7 @@ export function registerDefaultAuthTokenSuite(): void {
           }
         | undefined;
       expect(payload?.type).toBe("hello-ok");
-      expect(payload?.snapshot?.configPath).toBe(CONFIG_PATH);
+      expect(payload?.snapshot?.configPath).toBe(createConfigIO().configPath);
       expect(payload?.snapshot?.stateDir).toBe(STATE_DIR);
 
       ws.close();
@@ -161,12 +160,6 @@ export function registerDefaultAuthTokenSuite(): void {
           opts: { role: "operator", token, device: null },
           expectConnectOk: true,
           expectStatusOk: true,
-        },
-        {
-          name: "node + valid shared token => rejected without device",
-          opts: { role: "node", token, device: null, client: NODE_CLIENT },
-          expectConnectOk: false,
-          expectConnectError: "device identity required",
         },
         {
           name: "operator + invalid shared token => unauthorized",

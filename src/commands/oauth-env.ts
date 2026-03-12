@@ -1,5 +1,3 @@
-import { isWSLEnv } from "../infra/wsl.js";
-
 export function isRemoteEnvironment(): boolean {
   if (process.env.SSH_CLIENT || process.env.SSH_TTY || process.env.SSH_CONNECTION) {
     return true;
@@ -9,12 +7,7 @@ export function isRemoteEnvironment(): boolean {
     return true;
   }
 
-  if (
-    process.platform === "linux" &&
-    !process.env.DISPLAY &&
-    !process.env.WAYLAND_DISPLAY &&
-    !isWSLEnv()
-  ) {
+  if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
     return true;
   }
 

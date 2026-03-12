@@ -14,9 +14,6 @@ import { resolveGatewayInstallToken } from "../commands/gateway-install-token.js
 import { formatHealthCheckFailure } from "../commands/health-format.js";
 import { healthCommand } from "../commands/health.js";
 import {
-  detectBrowserOpenSupport,
-  formatControlUiSshHint,
-  openUrl,
   probeGatewayReachable,
   waitForGatewayReachable,
   resolveControlUiLinks,
@@ -25,7 +22,6 @@ import type { OnboardOptions } from "../commands/onboard-types.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveGatewayService } from "../daemon/service.js";
 import { isSystemdUserServiceAvailable } from "../daemon/systemd.js";
-import { ensureControlUiAssetsBuilt } from "../infra/control-ui-assets.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { restoreTerminalState } from "../terminal/restore.js";
 import { runTui } from "../tui/tui.js";
@@ -38,7 +34,6 @@ import type { WizardPrompter } from "./prompts.js";
 type FinalizeOnboardingOptions = {
   flow: WizardFlow;
   opts: OnboardOptions;
-  baseConfig: OpenClawConfig;
   nextConfig: OpenClawConfig;
   workspaceDir: string;
   settings: GatewayWizardSettings;
@@ -49,7 +44,7 @@ type FinalizeOnboardingOptions = {
 export async function finalizeOnboardingWizard(
   options: FinalizeOnboardingOptions,
 ): Promise<{ launchedTui: boolean }> {
-  const { flow, opts, baseConfig, nextConfig, settings, prompter, runtime } = options;
+  const { flow, opts, nextConfig, settings, prompter, runtime } = options;
 
   const withWizardProgress = async <T>(
     label: string,
@@ -184,7 +179,6 @@ export async function finalizeOnboardingWizard(
             {
               env: process.env,
               port: settings.port,
-              token: tokenResolution.token,
               runtime: daemonRuntime,
               warn: (message, title) => prompter.note(message, title),
               config: nextConfig,
@@ -219,7 +213,6 @@ export async function finalizeOnboardingWizard(
       bind: nextConfig.gateway?.bind ?? "loopback",
       port: settings.port,
       customBindHost: nextConfig.gateway?.customBindHost,
-      basePath: undefined,
     });
     // Daemon install/restart can briefly flap the WS; wait a bit so health check doesn't false-fail.
     await waitForGatewayReachable({
@@ -242,37 +235,11 @@ export async function finalizeOnboardingWizard(
     }
   }
 
-  const controlUiEnabled =
-    nextConfig.gateway?.controlUi?.enabled ?? baseConfig.gateway?.controlUi?.enabled ?? true;
-  if (!opts.skipUi && controlUiEnabled) {
-    const controlUiAssets = await ensureControlUiAssetsBuilt(runtime);
-    if (!controlUiAssets.ok && controlUiAssets.message) {
-      runtime.error(controlUiAssets.message);
-    }
-  }
-
-  await prompter.note(
-    [
-      "Add nodes for extra features:",
-      "- macOS app (system + notifications)",
-      "- iOS app (camera/canvas)",
-      "- Android app (camera/canvas)",
-    ].join("\n"),
-    "Optional apps",
-  );
-
-  const controlUiBasePath =
-    nextConfig.gateway?.controlUi?.basePath ?? baseConfig.gateway?.controlUi?.basePath;
   const links = resolveControlUiLinks({
     bind: settings.bind,
     port: settings.port,
     customBindHost: settings.customBindHost,
-    basePath: controlUiBasePath,
   });
-  const authedUrl =
-    settings.authMode === "token" && settings.gatewayToken
-      ? `${links.httpUrl}#token=${encodeURIComponent(settings.gatewayToken)}`
-      : links.httpUrl;
   let resolvedGatewayPassword = "";
   if (settings.authMode === "password") {
     try {
@@ -313,23 +280,17 @@ export async function finalizeOnboardingWizard(
 
   await prompter.note(
     [
-      `Web UI: ${links.httpUrl}`,
-      settings.authMode === "token" && settings.gatewayToken
-        ? `Web UI (with token): ${authedUrl}`
-        : undefined,
+      `Gateway HTTP: ${links.httpUrl}`,
       `Gateway WS: ${links.wsUrl}`,
       gatewayStatusLine,
-      "Docs: https://docs.openclaw.ai/web/control-ui",
+      "Docs: https://docs.openclaw.ai/gateway",
     ]
       .filter(Boolean)
       .join("\n"),
-    "Control UI",
+    "Gateway",
   );
 
-  let controlUiOpened = false;
-  let controlUiOpenHint: string | undefined;
-  let seededInBackground = false;
-  let hatchChoice: "tui" | "web" | "later" | null = null;
+  let hatchChoice: "tui" | "later" | null = null;
   let launchedTui = false;
 
   if (!opts.skipUi && gatewayProbe.ok) {
@@ -347,13 +308,11 @@ export async function finalizeOnboardingWizard(
 
     await prompter.note(
       [
-        "Gateway token: shared auth for the Gateway + Control UI.",
+        "Gateway token authenticates local tools like the TUI.",
         "Stored in: ~/.openclaw/openclaw.json (gateway.auth.token) or OPENCLAW_GATEWAY_TOKEN.",
         `View token: ${formatCliCommand("openclaw config get gateway.auth.token")}`,
         `Generate token: ${formatCliCommand("openclaw doctor --generate-gateway-token")}`,
-        "Web UI stores a copy in this browser's localStorage (openclaw.control.settings.v1).",
-        `Open the dashboard anytime: ${formatCliCommand("openclaw dashboard --no-open")}`,
-        "If prompted: paste the token into Control UI settings (or use the tokenized dashboard URL).",
+        `Start the TUI anytime: ${formatCliCommand("openclaw tui")}`,
       ].join("\n"),
       "Token",
     );
@@ -362,7 +321,6 @@ export async function finalizeOnboardingWizard(
       message: "How do you want to hatch your bot?",
       options: [
         { value: "tui", label: "Hatch in TUI (recommended)" },
-        { value: "web", label: "Open the Web UI" },
         { value: "later", label: "Do this later" },
       ],
       initialValue: "tui",
@@ -379,44 +337,11 @@ export async function finalizeOnboardingWizard(
         message: hasBootstrap ? "Wake up, my friend!" : undefined,
       });
       launchedTui = true;
-    } else if (hatchChoice === "web") {
-      const browserSupport = await detectBrowserOpenSupport();
-      if (browserSupport.ok) {
-        controlUiOpened = await openUrl(authedUrl);
-        if (!controlUiOpened) {
-          controlUiOpenHint = formatControlUiSshHint({
-            port: settings.port,
-            basePath: controlUiBasePath,
-            token: settings.authMode === "token" ? settings.gatewayToken : undefined,
-          });
-        }
-      } else {
-        controlUiOpenHint = formatControlUiSshHint({
-          port: settings.port,
-          basePath: controlUiBasePath,
-          token: settings.authMode === "token" ? settings.gatewayToken : undefined,
-        });
-      }
-      await prompter.note(
-        [
-          `Dashboard link (with token): ${authedUrl}`,
-          controlUiOpened
-            ? "Opened in your browser. Keep that tab to control OpenClaw."
-            : "Copy/paste this URL in a browser on this machine to control OpenClaw.",
-          controlUiOpenHint,
-        ]
-          .filter(Boolean)
-          .join("\n"),
-        "Dashboard ready",
-      );
     } else {
-      await prompter.note(
-        `When you're ready: ${formatCliCommand("openclaw dashboard --no-open")}`,
-        "Later",
-      );
+      await prompter.note(`When you're ready: ${formatCliCommand("openclaw tui")}`, "Later");
     }
   } else if (opts.skipUi) {
-    await prompter.note("Skipping Control UI/TUI prompts.", "Control UI");
+    await prompter.note("Skipping TUI prompt.", "TUI");
   }
 
   await prompter.note(
@@ -434,77 +359,86 @@ export async function finalizeOnboardingWizard(
 
   await setupOnboardingShellCompletion({ flow, prompter });
 
-  const shouldOpenControlUi =
-    !opts.skipUi &&
-    settings.authMode === "token" &&
-    Boolean(settings.gatewayToken) &&
-    hatchChoice === null;
-  if (shouldOpenControlUi) {
-    const browserSupport = await detectBrowserOpenSupport();
-    if (browserSupport.ok) {
-      controlUiOpened = await openUrl(authedUrl);
-      if (!controlUiOpened) {
-        controlUiOpenHint = formatControlUiSshHint({
-          port: settings.port,
-          basePath: controlUiBasePath,
-          token: settings.gatewayToken,
-        });
-      }
-    } else {
-      controlUiOpenHint = formatControlUiSshHint({
-        port: settings.port,
-        basePath: controlUiBasePath,
-        token: settings.gatewayToken,
-      });
-    }
-
-    await prompter.note(
-      [
-        `Dashboard link (with token): ${authedUrl}`,
-        controlUiOpened
-          ? "Opened in your browser. Keep that tab to control OpenClaw."
-          : "Copy/paste this URL in a browser on this machine to control OpenClaw.",
-        controlUiOpenHint,
-      ]
-        .filter(Boolean)
-        .join("\n"),
-      "Dashboard ready",
-    );
-  }
-
-  const webSearchProvider = nextConfig.tools?.web?.search?.provider ?? "brave";
-  const webSearchKey =
-    webSearchProvider === "perplexity"
-      ? (nextConfig.tools?.web?.search?.perplexity?.apiKey ?? "").trim()
-      : (nextConfig.tools?.web?.search?.apiKey ?? "").trim();
-  const webSearchEnv =
-    webSearchProvider === "perplexity"
-      ? (process.env.PERPLEXITY_API_KEY ?? "").trim()
-      : (process.env.BRAVE_API_KEY ?? "").trim();
-  const hasWebSearchKey = Boolean(webSearchKey || webSearchEnv);
-  await prompter.note(
-    hasWebSearchKey
-      ? [
+  const webSearchProvider = nextConfig.tools?.web?.search?.provider;
+  const webSearchEnabled = nextConfig.tools?.web?.search?.enabled;
+  if (webSearchProvider) {
+    const { SEARCH_PROVIDER_OPTIONS, resolveExistingKey, hasExistingKey, hasKeyInEnv } =
+      await import("../commands/onboard-search.js");
+    const entry = SEARCH_PROVIDER_OPTIONS.find((e) => e.value === webSearchProvider);
+    const label = entry?.label ?? webSearchProvider;
+    const storedKey = resolveExistingKey(nextConfig, webSearchProvider);
+    const keyConfigured = hasExistingKey(nextConfig, webSearchProvider);
+    const envAvailable = entry ? hasKeyInEnv(entry) : false;
+    const hasKey = keyConfigured || envAvailable;
+    const keySource = storedKey
+      ? "API key: stored in config."
+      : keyConfigured
+        ? "API key: configured via secret reference."
+        : envAvailable
+          ? `API key: provided via ${entry?.envKeys.join(" / ")} env var.`
+          : undefined;
+    if (webSearchEnabled !== false && hasKey) {
+      await prompter.note(
+        [
           "Web search is enabled, so your agent can look things up online when needed.",
           "",
-          `Provider: ${webSearchProvider === "perplexity" ? "Perplexity Search" : "Brave Search"}`,
-          webSearchKey
-            ? `API key: stored in config (tools.web.search.${webSearchProvider === "perplexity" ? "perplexity.apiKey" : "apiKey"}).`
-            : `API key: provided via ${webSearchProvider === "perplexity" ? "PERPLEXITY_API_KEY" : "BRAVE_API_KEY"} env var (Gateway environment).`,
-          "Docs: https://docs.openclaw.ai/tools/web",
-        ].join("\n")
-      : [
-          "To enable web search, your agent will need an API key for either Perplexity Search or Brave Search.",
-          "",
-          "Set it up interactively:",
-          `- Run: ${formatCliCommand("openclaw configure --section web")}`,
-          "- Choose a provider and paste your API key",
-          "",
-          "Alternative: set PERPLEXITY_API_KEY or BRAVE_API_KEY in the Gateway environment (no config changes).",
+          `Provider: ${label}`,
+          ...(keySource ? [keySource] : []),
           "Docs: https://docs.openclaw.ai/tools/web",
         ].join("\n"),
-    "Web search (optional)",
-  );
+        "Web search",
+      );
+    } else if (!hasKey) {
+      await prompter.note(
+        [
+          `Provider ${label} is selected but no API key was found.`,
+          "web_search will not work until a key is added.",
+          `  ${formatCliCommand("openclaw configure --section web")}`,
+          "",
+          `Get your key at: ${entry?.signupUrl ?? "https://docs.openclaw.ai/tools/web"}`,
+          "Docs: https://docs.openclaw.ai/tools/web",
+        ].join("\n"),
+        "Web search",
+      );
+    } else {
+      await prompter.note(
+        [
+          `Web search (${label}) is configured but disabled.`,
+          `Re-enable: ${formatCliCommand("openclaw configure --section web")}`,
+          "",
+          "Docs: https://docs.openclaw.ai/tools/web",
+        ].join("\n"),
+        "Web search",
+      );
+    }
+  } else {
+    // Legacy configs may have a working key (e.g. apiKey or BRAVE_API_KEY) without
+    // an explicit provider. Runtime auto-detects these, so avoid saying "skipped".
+    const { SEARCH_PROVIDER_OPTIONS, hasExistingKey, hasKeyInEnv } =
+      await import("../commands/onboard-search.js");
+    const legacyDetected = SEARCH_PROVIDER_OPTIONS.find(
+      (e) => hasExistingKey(nextConfig, e.value) || hasKeyInEnv(e),
+    );
+    if (legacyDetected) {
+      await prompter.note(
+        [
+          `Web search is available via ${legacyDetected.label} (auto-detected).`,
+          "Docs: https://docs.openclaw.ai/tools/web",
+        ].join("\n"),
+        "Web search",
+      );
+    } else {
+      await prompter.note(
+        [
+          "Web search was skipped. You can enable it later:",
+          `  ${formatCliCommand("openclaw configure --section web")}`,
+          "",
+          "Docs: https://docs.openclaw.ai/tools/web",
+        ].join("\n"),
+        "Web search",
+      );
+    }
+  }
 
   await prompter.note(
     'What now: https://openclaw.ai/showcase ("What People Are Building").',
@@ -512,11 +446,9 @@ export async function finalizeOnboardingWizard(
   );
 
   await prompter.outro(
-    controlUiOpened
-      ? "Onboarding complete. Dashboard opened; keep that tab to control OpenClaw."
-      : seededInBackground
-        ? "Onboarding complete. Web UI seeded in the background; open it anytime with the dashboard link above."
-        : "Onboarding complete. Use the dashboard link above to control OpenClaw.",
+    launchedTui
+      ? "Onboarding complete. TUI launched."
+      : `Onboarding complete. Start the TUI with ${formatCliCommand("openclaw tui")}.`,
   );
 
   return { launchedTui };

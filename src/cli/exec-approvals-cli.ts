@@ -10,12 +10,10 @@ import {
 import { formatTimeAgo } from "../infra/format-time/format-relative.ts";
 import { defaultRuntime } from "../runtime.js";
 import { formatDocsLink } from "../terminal/links.js";
-import { renderTable } from "../terminal/table.js";
+import { getTerminalTableWidth, renderTable } from "../terminal/table.js";
 import { isRich, theme } from "../terminal/theme.js";
 import { describeUnknownError } from "./gateway-cli/shared.js";
 import { callGatewayFromCli } from "./gateway-rpc.js";
-import { nodesCallOpts, resolveNodeId } from "./nodes-cli/rpc.js";
-import type { NodesRpcOpts } from "./nodes-cli/types.js";
 
 type ExecApprovalsSnapshot = {
   path: string;
@@ -24,12 +22,16 @@ type ExecApprovalsSnapshot = {
   file: ExecApprovalsFile;
 };
 
-type ExecApprovalsCliOpts = NodesRpcOpts & {
-  node?: string;
+type ExecApprovalsCliOpts = {
+  gatewayUrl?: string;
+  gatewayToken?: string;
+  gatewayPassword?: string;
+  timeoutMs?: number;
   gateway?: boolean;
   file?: string;
   stdin?: boolean;
   agent?: string;
+  json?: boolean;
 };
 
 async function readStdin(): Promise<string> {
@@ -40,24 +42,12 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-async function resolveTargetNodeId(opts: ExecApprovalsCliOpts): Promise<string | null> {
-  if (opts.gateway) {
-    return null;
-  }
-  const raw = opts.node?.trim() ?? "";
-  if (!raw) {
-    return null;
-  }
-  return await resolveNodeId(opts as NodesRpcOpts, raw);
-}
-
-async function loadSnapshot(
-  opts: ExecApprovalsCliOpts,
-  nodeId: string | null,
-): Promise<ExecApprovalsSnapshot> {
-  const method = nodeId ? "exec.approvals.node.get" : "exec.approvals.get";
-  const params = nodeId ? { nodeId } : {};
-  const snapshot = (await callGatewayFromCli(method, opts, params)) as ExecApprovalsSnapshot;
+async function loadSnapshot(opts: ExecApprovalsCliOpts): Promise<ExecApprovalsSnapshot> {
+  const snapshot = (await callGatewayFromCli(
+    "exec.approvals.get",
+    opts,
+    {},
+  )) as ExecApprovalsSnapshot;
   return snapshot;
 }
 
@@ -78,15 +68,13 @@ function saveSnapshotLocal(file: ExecApprovalsFile): ExecApprovalsSnapshot {
 
 async function loadSnapshotTarget(opts: ExecApprovalsCliOpts): Promise<{
   snapshot: ExecApprovalsSnapshot;
-  nodeId: string | null;
-  source: "gateway" | "node" | "local";
+  source: "gateway" | "local";
 }> {
-  if (!opts.gateway && !opts.node) {
-    return { snapshot: loadSnapshotLocal(), nodeId: null, source: "local" };
+  if (!opts.gateway) {
+    return { snapshot: loadSnapshotLocal(), source: "local" };
   }
-  const nodeId = await resolveTargetNodeId(opts);
-  const snapshot = await loadSnapshot(opts, nodeId);
-  return { snapshot, nodeId, source: nodeId ? "node" : "gateway" };
+  const snapshot = await loadSnapshot(opts);
+  return { snapshot, source: "gateway" };
 }
 
 function exitWithError(message: string): never {
@@ -105,27 +93,25 @@ function requireTrimmedNonEmpty(value: string, message: string): string {
 
 async function loadWritableSnapshotTarget(opts: ExecApprovalsCliOpts): Promise<{
   snapshot: ExecApprovalsSnapshot;
-  nodeId: string | null;
-  source: "gateway" | "node" | "local";
+  source: "gateway" | "local";
   targetLabel: string;
   baseHash: string;
 }> {
-  const { snapshot, nodeId, source } = await loadSnapshotTarget(opts);
+  const { snapshot, source } = await loadSnapshotTarget(opts);
   if (source === "local") {
     defaultRuntime.log(theme.muted("Writing local approvals."));
   }
-  const targetLabel = source === "local" ? "local" : nodeId ? `node:${nodeId}` : "gateway";
+  const targetLabel = source === "local" ? "local" : "gateway";
   const baseHash = snapshot.hash;
   if (!baseHash) {
     exitWithError("Exec approvals hash missing; reload and retry.");
   }
-  return { snapshot, nodeId, source, targetLabel, baseHash };
+  return { snapshot, source, targetLabel, baseHash };
 }
 
 async function saveSnapshotTargeted(params: {
   opts: ExecApprovalsCliOpts;
-  source: "gateway" | "node" | "local";
-  nodeId: string | null;
+  source: "gateway" | "local";
   file: ExecApprovalsFile;
   baseHash: string;
   targetLabel: string;
@@ -133,7 +119,7 @@ async function saveSnapshotTargeted(params: {
   const next =
     params.source === "local"
       ? saveSnapshotLocal(params.file)
-      : await saveSnapshot(params.opts, params.nodeId, params.file, params.baseHash);
+      : await saveSnapshot(params.opts, params.file, params.baseHash);
   if (params.opts.json) {
     defaultRuntime.log(JSON.stringify(next));
     return;
@@ -151,7 +137,7 @@ function renderApprovalsSnapshot(snapshot: ExecApprovalsSnapshot, targetLabel: s
   const rich = isRich();
   const heading = (text: string) => (rich ? theme.heading(text) : text);
   const muted = (text: string) => (rich ? theme.muted(text) : text);
-  const tableWidth = Math.max(60, (process.stdout.columns ?? 120) - 1);
+  const tableWidth = getTerminalTableWidth();
 
   const file = snapshot.file ?? { version: 1 };
   const defaults = file.defaults ?? {};
@@ -232,13 +218,13 @@ function renderApprovalsSnapshot(snapshot: ExecApprovalsSnapshot, targetLabel: s
 
 async function saveSnapshot(
   opts: ExecApprovalsCliOpts,
-  nodeId: string | null,
   file: ExecApprovalsFile,
   baseHash: string,
 ): Promise<ExecApprovalsSnapshot> {
-  const method = nodeId ? "exec.approvals.node.set" : "exec.approvals.set";
-  const params = nodeId ? { nodeId, file, baseHash } : { file, baseHash };
-  const snapshot = (await callGatewayFromCli(method, opts, params)) as ExecApprovalsSnapshot;
+  const snapshot = (await callGatewayFromCli("exec.approvals.set", opts, {
+    file,
+    baseHash,
+  })) as ExecApprovalsSnapshot;
   return snapshot;
 }
 
@@ -271,8 +257,7 @@ function isEmptyAgent(agent: ExecApprovalsAgent): boolean {
 }
 
 async function loadWritableAllowlistAgent(opts: ExecApprovalsCliOpts): Promise<{
-  nodeId: string | null;
-  source: "gateway" | "node" | "local";
+  source: "gateway" | "local";
   targetLabel: string;
   baseHash: string;
   file: ExecApprovalsFile;
@@ -280,8 +265,7 @@ async function loadWritableAllowlistAgent(opts: ExecApprovalsCliOpts): Promise<{
   agent: ExecApprovalsAgent;
   allowlistEntries: NonNullable<ExecApprovalsAgent["allowlist"]>;
 }> {
-  const { snapshot, nodeId, source, targetLabel, baseHash } =
-    await loadWritableSnapshotTarget(opts);
+  const { snapshot, source, targetLabel, baseHash } = await loadWritableSnapshotTarget(opts);
   const file = snapshot.file ?? { version: 1 };
   file.version = 1;
 
@@ -289,7 +273,7 @@ async function loadWritableAllowlistAgent(opts: ExecApprovalsCliOpts): Promise<{
   const agent = ensureAgent(file, agentKey);
   const allowlistEntries = Array.isArray(agent.allowlist) ? agent.allowlist : [];
 
-  return { nodeId, source, targetLabel, baseHash, file, agentKey, agent, allowlistEntries };
+  return { source, targetLabel, baseHash, file, agentKey, agent, allowlistEntries };
 }
 
 type WritableAllowlistAgentContext = Awaited<ReturnType<typeof loadWritableAllowlistAgent>> & {
@@ -312,7 +296,6 @@ async function runAllowlistMutation(
     await saveSnapshotTargeted({
       opts,
       source: context.source,
-      nodeId: context.nodeId,
       file: context.file,
       baseHash: context.baseHash,
       targetLabel: context.targetLabel,
@@ -332,13 +315,11 @@ function registerAllowlistMutationCommand(params: {
   const command = params.allowlist
     .command(`${params.name} <pattern>`)
     .description(params.description)
-    .option("--node <node>", "Target node id/name/IP")
     .option("--gateway", "Force gateway approvals", false)
     .option("--agent <id>", 'Agent id (defaults to "*")')
     .action(async (pattern: string, opts: ExecApprovalsCliOpts) => {
       await runAllowlistMutation(pattern, opts, params.mutate);
     });
-  nodesCallOpts(command);
   return command;
 }
 
@@ -349,21 +330,20 @@ export function registerExecApprovalsCli(program: Command) {
   const approvals = program
     .command("approvals")
     .alias("exec-approvals")
-    .description("Manage exec approvals (gateway or node host)")
+    .description("Manage exec approvals")
     .addHelpText(
       "after",
       () =>
         `\n${theme.muted("Docs:")} ${formatDocsLink("/cli/approvals", "docs.openclaw.ai/cli/approvals")}\n`,
     );
 
-  const getCmd = approvals
+  approvals
     .command("get")
     .description("Fetch exec approvals snapshot")
-    .option("--node <node>", "Target node id/name/IP")
     .option("--gateway", "Force gateway approvals", false)
     .action(async (opts: ExecApprovalsCliOpts) => {
       try {
-        const { snapshot, nodeId, source } = await loadSnapshotTarget(opts);
+        const { snapshot, source } = await loadSnapshotTarget(opts);
         if (opts.json) {
           defaultRuntime.log(JSON.stringify(snapshot));
           return;
@@ -374,19 +354,17 @@ export function registerExecApprovalsCli(program: Command) {
           defaultRuntime.log(muted("Showing local approvals."));
           defaultRuntime.log("");
         }
-        const targetLabel = source === "local" ? "local" : nodeId ? `node:${nodeId}` : "gateway";
+        const targetLabel = source === "local" ? "local" : "gateway";
         renderApprovalsSnapshot(snapshot, targetLabel);
       } catch (err) {
         defaultRuntime.error(formatCliError(err));
         defaultRuntime.exit(1);
       }
     });
-  nodesCallOpts(getCmd);
 
-  const setCmd = approvals
+  approvals
     .command("set")
     .description("Replace exec approvals with a JSON file")
-    .option("--node <node>", "Target node id/name/IP")
     .option("--gateway", "Force gateway approvals", false)
     .option("--file <path>", "Path to JSON file to upload")
     .option("--stdin", "Read JSON from stdin", false)
@@ -398,7 +376,7 @@ export function registerExecApprovalsCli(program: Command) {
         if (opts.file && opts.stdin) {
           exitWithError("Use either --file or --stdin (not both).");
         }
-        const { source, nodeId, targetLabel, baseHash } = await loadWritableSnapshotTarget(opts);
+        const { source, targetLabel, baseHash } = await loadWritableSnapshotTarget(opts);
         const raw = opts.stdin ? await readStdin() : await fs.readFile(String(opts.file), "utf8");
         let file: ExecApprovalsFile;
         try {
@@ -407,13 +385,12 @@ export function registerExecApprovalsCli(program: Command) {
           exitWithError(`Failed to parse approvals JSON: ${String(err)}`);
         }
         file.version = 1;
-        await saveSnapshotTargeted({ opts, source, nodeId, file, baseHash, targetLabel });
+        await saveSnapshotTargeted({ opts, source, file, baseHash, targetLabel });
       } catch (err) {
         defaultRuntime.error(formatCliError(err));
         defaultRuntime.exit(1);
       }
     });
-  nodesCallOpts(setCmd);
 
   const allowlist = approvals
     .command("allowlist")
@@ -424,9 +401,6 @@ export function registerExecApprovalsCli(program: Command) {
         `\n${theme.heading("Examples:")}\n${formatExample(
           'openclaw approvals allowlist add "~/Projects/**/bin/rg"',
           "Allowlist a local binary pattern for the main agent.",
-        )}\n${formatExample(
-          'openclaw approvals allowlist add --agent main --node <id|name|ip> "/usr/bin/uptime"',
-          "Allowlist on a specific node/agent.",
         )}\n${formatExample(
           'openclaw approvals allowlist add --agent "*" "/usr/bin/uname"',
           "Allowlist for all agents (wildcard).",

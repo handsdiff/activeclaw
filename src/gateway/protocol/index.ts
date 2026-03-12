@@ -109,10 +109,6 @@ import {
   DeviceTokenRotateParamsSchema,
   type ExecApprovalsGetParams,
   ExecApprovalsGetParamsSchema,
-  type ExecApprovalsNodeGetParams,
-  ExecApprovalsNodeGetParamsSchema,
-  type ExecApprovalsNodeSetParams,
-  ExecApprovalsNodeSetParamsSchema,
   type ExecApprovalsSetParams,
   ExecApprovalsSetParamsSchema,
   type ExecApprovalsSnapshot,
@@ -136,28 +132,6 @@ import {
   LogsTailResultSchema,
   type ModelsListParams,
   ModelsListParamsSchema,
-  type NodeDescribeParams,
-  NodeDescribeParamsSchema,
-  type NodeEventParams,
-  NodeEventParamsSchema,
-  type NodeInvokeParams,
-  NodeInvokeParamsSchema,
-  type NodeInvokeResultParams,
-  NodeInvokeResultParamsSchema,
-  type NodeListParams,
-  NodeListParamsSchema,
-  type NodePairApproveParams,
-  NodePairApproveParamsSchema,
-  type NodePairListParams,
-  NodePairListParamsSchema,
-  type NodePairRejectParams,
-  NodePairRejectParamsSchema,
-  type NodePairRequestParams,
-  NodePairRequestParamsSchema,
-  type NodePairVerifyParams,
-  NodePairVerifyParamsSchema,
-  type NodeRenameParams,
-  NodeRenameParamsSchema,
   type PollParams,
   PollParamsSchema,
   PROTOCOL_VERSION,
@@ -270,27 +244,6 @@ export const validateAgentsFilesGetParams = ajv.compile<AgentsFilesGetParams>(
 export const validateAgentsFilesSetParams = ajv.compile<AgentsFilesSetParams>(
   AgentsFilesSetParamsSchema,
 );
-export const validateNodePairRequestParams = ajv.compile<NodePairRequestParams>(
-  NodePairRequestParamsSchema,
-);
-export const validateNodePairListParams = ajv.compile<NodePairListParams>(NodePairListParamsSchema);
-export const validateNodePairApproveParams = ajv.compile<NodePairApproveParams>(
-  NodePairApproveParamsSchema,
-);
-export const validateNodePairRejectParams = ajv.compile<NodePairRejectParams>(
-  NodePairRejectParamsSchema,
-);
-export const validateNodePairVerifyParams = ajv.compile<NodePairVerifyParams>(
-  NodePairVerifyParamsSchema,
-);
-export const validateNodeRenameParams = ajv.compile<NodeRenameParams>(NodeRenameParamsSchema);
-export const validateNodeListParams = ajv.compile<NodeListParams>(NodeListParamsSchema);
-export const validateNodeDescribeParams = ajv.compile<NodeDescribeParams>(NodeDescribeParamsSchema);
-export const validateNodeInvokeParams = ajv.compile<NodeInvokeParams>(NodeInvokeParamsSchema);
-export const validateNodeInvokeResultParams = ajv.compile<NodeInvokeResultParams>(
-  NodeInvokeResultParamsSchema,
-);
-export const validateNodeEventParams = ajv.compile<NodeEventParams>(NodeEventParamsSchema);
 export const validatePushTestParams = ajv.compile<PushTestParams>(PushTestParamsSchema);
 export const validateSecretsResolveParams = ajv.compile<SecretsResolveParams>(
   SecretsResolveParamsSchema,
@@ -334,6 +287,7 @@ export const validateWizardCancelParams = ajv.compile<WizardCancelParams>(Wizard
 export const validateWizardStatusParams = ajv.compile<WizardStatusParams>(WizardStatusParamsSchema);
 export const validateTalkModeParams = ajv.compile<TalkModeParams>(TalkModeParamsSchema);
 export const validateTalkConfigParams = ajv.compile<TalkConfigParams>(TalkConfigParamsSchema);
+export const validateTalkConfigResult = ajv.compile<TalkConfigResult>(TalkConfigResultSchema);
 export const validateChannelsStatusParams = ajv.compile<ChannelsStatusParams>(
   ChannelsStatusParamsSchema,
 );
@@ -383,12 +337,6 @@ export const validateExecApprovalRequestParams = ajv.compile<ExecApprovalRequest
 );
 export const validateExecApprovalResolveParams = ajv.compile<ExecApprovalResolveParams>(
   ExecApprovalResolveParamsSchema,
-);
-export const validateExecApprovalsNodeGetParams = ajv.compile<ExecApprovalsNodeGetParams>(
-  ExecApprovalsNodeGetParamsSchema,
-);
-export const validateExecApprovalsNodeSetParams = ajv.compile<ExecApprovalsNodeSetParams>(
-  ExecApprovalsNodeSetParamsSchema,
 );
 export const validateLogsTailParams = ajv.compile<LogsTailParams>(LogsTailParamsSchema);
 export const validateChatHistoryParams = ajv.compile(ChatHistoryParamsSchema);
@@ -458,13 +406,6 @@ export {
   WakeParamsSchema,
   PushTestParamsSchema,
   PushTestResultSchema,
-  NodePairRequestParamsSchema,
-  NodePairListParamsSchema,
-  NodePairApproveParamsSchema,
-  NodePairRejectParamsSchema,
-  NodePairVerifyParamsSchema,
-  NodeListParamsSchema,
-  NodeInvokeParamsSchema,
   SessionsListParamsSchema,
   SessionsPreviewParamsSchema,
   SessionsPatchParamsSchema,
@@ -557,9 +498,6 @@ export type {
   TickEvent,
   ShutdownEvent,
   WakeParams,
-  NodePairRequestParams,
-  NodePairListParams,
-  NodePairApproveParams,
   DevicePairListParams,
   DevicePairApproveParams,
   DevicePairRejectParams,
@@ -608,12 +546,6 @@ export type {
   SkillsBinsResult,
   SkillsInstallParams,
   SkillsUpdateParams,
-  NodePairRejectParams,
-  NodePairVerifyParams,
-  NodeListParams,
-  NodeInvokeParams,
-  NodeInvokeResultParams,
-  NodeEventParams,
   SessionsListParams,
   SessionsPreviewParams,
   SessionsResolveParams,

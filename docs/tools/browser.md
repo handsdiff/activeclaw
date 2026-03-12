@@ -3,7 +3,7 @@ summary: "Integrated browser control service + action commands"
 read_when:
   - Adding agent-controlled browser automation
   - Debugging why openclaw is interfering with your own Chrome
-  - Implementing browser settings + lifecycle in the macOS app
+  - Configuring browser settings, relay behavior, or remote CDP profiles
 title: "Browser (OpenClaw-managed)"
 ---
 
@@ -121,13 +121,6 @@ openclaw config set browser.executablePath "/usr/bin/google-chrome"
   }
 }
 
-// Windows
-{
-  browser: {
-    executablePath: "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"
-  }
-}
-
 // Linux
 {
   browser: {
@@ -139,7 +132,6 @@ openclaw config set browser.executablePath "/usr/bin/google-chrome"
 ## Local vs remote control
 
 - **Local control (default):** the Gateway starts the loopback control service and can launch a local browser.
-- **Remote control (node host):** run a node host on the machine that has the browser; the Gateway proxies browser actions to it.
 - **Remote CDP:** set `browser.profiles.<name>.cdpUrl` (or `browser.cdpUrl`) to
   attach to a remote Chromium-based browser. In this case, OpenClaw will not launch a local browser.
 
@@ -151,20 +143,6 @@ Remote CDP URLs can include auth:
 OpenClaw preserves the auth when calling `/json/*` endpoints and when connecting
 to the CDP WebSocket. Prefer environment variables or secrets managers for
 tokens instead of committing them to config files.
-
-## Node browser proxy (zero-config default)
-
-If you run a **node host** on the machine that has your browser, OpenClaw can
-auto-route browser tool calls to that node without any extra browser config.
-This is the default path for remote gateways.
-
-Notes:
-
-- The node host exposes its local browser control server via a **proxy command**.
-- Profiles come from the node’s own `browser.profiles` config (same as local).
-- Disable if you don’t want it:
-  - On the node: `nodeHost.browserProxy.enabled=false`
-  - On the gateway: `gateway.nodes.browser.mode="off"`
 
 ## Browserless (hosted remote CDP)
 
@@ -196,18 +174,65 @@ Notes:
 - Replace `<BROWSERLESS_API_KEY>` with your real Browserless token.
 - Choose the region endpoint that matches your Browserless account (see their docs).
 
+## Direct WebSocket CDP providers
+
+Some hosted browser services expose a **direct WebSocket** endpoint rather than
+the standard HTTP-based CDP discovery (`/json/version`). OpenClaw supports both:
+
+- **HTTP(S) endpoints** (e.g. Browserless) — OpenClaw calls `/json/version` to
+  discover the WebSocket debugger URL, then connects.
+- **WebSocket endpoints** (`ws://` / `wss://`) — OpenClaw connects directly,
+  skipping `/json/version`. Use this for services like
+  [Browserbase](https://www.browserbase.com) or any provider that hands you a
+  WebSocket URL.
+
+### Browserbase
+
+[Browserbase](https://www.browserbase.com) is a cloud platform for running
+headless browsers with built-in CAPTCHA solving, stealth mode, and residential
+proxies.
+
+```json5
+{
+  browser: {
+    enabled: true,
+    defaultProfile: "browserbase",
+    remoteCdpTimeoutMs: 3000,
+    remoteCdpHandshakeTimeoutMs: 5000,
+    profiles: {
+      browserbase: {
+        cdpUrl: "wss://connect.browserbase.com?apiKey=<BROWSERBASE_API_KEY>",
+        color: "#F97316",
+      },
+    },
+  },
+}
+```
+
+Notes:
+
+- [Sign up](https://www.browserbase.com/sign-up) and copy your **API Key**
+  from the [Overview dashboard](https://www.browserbase.com/overview).
+- Replace `<BROWSERBASE_API_KEY>` with your real Browserbase API key.
+- Browserbase auto-creates a browser session on WebSocket connect, so no
+  manual session creation step is needed.
+- The free tier allows one concurrent session and one browser hour per month.
+  See [pricing](https://www.browserbase.com/pricing) for paid plan limits.
+- See the [Browserbase docs](https://docs.browserbase.com) for full API
+  reference, SDK guides, and integration examples.
+
 ## Security
 
 Key ideas:
 
-- Browser control is loopback-only; access flows through the Gateway’s auth or node pairing.
+- Browser control is loopback-only; access flows through the Gateway’s auth surface.
 - If browser control is enabled and no auth is configured, OpenClaw auto-generates `gateway.auth.token` on startup and persists it to config.
-- Keep the Gateway and any node hosts on a private network (Tailscale); avoid public exposure.
+- Keep the Gateway on a private network (Tailscale or SSH); avoid public exposure.
 - Treat remote CDP URLs/tokens as secrets; prefer env vars or a secrets manager.
 
 Remote CDP tips:
 
-- Prefer HTTPS endpoints and short-lived tokens where possible.
+- Prefer encrypted endpoints (HTTPS or WSS) and short-lived tokens where possible.
 - Avoid embedding long-lived tokens directly in config files.
 
 ## Profiles (multi-browser)
@@ -235,12 +260,10 @@ Full guide: [Chrome extension](/tools/chrome-extension)
 
 Flow:
 
-- The Gateway runs locally (same machine) or a node host runs on the browser machine.
+- The Gateway runs locally on the same machine as the browser.
 - A local **relay server** listens at a loopback `cdpUrl` (default: `http://127.0.0.1:18792`).
 - You click the **OpenClaw Browser Relay** extension icon on a tab to attach (it does not auto-attach).
 - The agent controls that tab via the normal `browser` tool, by selecting the right profile.
-
-If the Gateway runs elsewhere, run a node host on the browser machine so the Gateway can proxy browser actions.
 
 ### Sandboxed sessions
 
@@ -281,6 +304,19 @@ Notes:
 
 - This mode relies on Playwright-on-CDP for most operations (screenshots/snapshots/actions).
 - Detach by clicking the extension icon again.
+- Leave the relay loopback-only by default. If the relay must be reachable from a different network namespace, set `browser.relayBindHost` to an explicit bind address such as `0.0.0.0` while keeping the surrounding network private and authenticated.
+
+Cross-namespace example:
+
+```json5
+{
+  browser: {
+    enabled: true,
+    relayBindHost: "0.0.0.0",
+    defaultProfile: "chrome",
+  },
+}
+```
 
 ## Isolation guarantees
 
@@ -304,7 +340,6 @@ Platforms:
 
 - macOS: checks `/Applications` and `~/Applications`.
 - Linux: looks for `google-chrome`, `brave`, `microsoft-edge`, `chromium`, etc.
-- Windows: checks common install locations.
 
 ## Control API (optional)
 
@@ -567,7 +602,7 @@ These are useful for “make the site behave like X” workflows:
   execute arbitrary JavaScript in the page context. Prompt injection can steer
   this. Disable it with `browser.evaluateEnabled=false` if you do not need it.
 - For logins and anti-bot notes (X/Twitter, etc.), see [Browser login + X/Twitter posting](/tools/browser-login).
-- Keep the Gateway/node host private (loopback or tailnet-only).
+- Keep the Gateway private (loopback or tailnet-only).
 - Remote CDP endpoints are powerful; tunnel and protect them.
 
 Strict-mode example (block private/internal destinations by default):
