@@ -21,6 +21,7 @@ import { hubOnboardingAdapter } from "./onboarding.js";
 import { probeHub } from "./probe.js";
 import { getHubRuntime } from "./runtime.js";
 import { sendMessageHub } from "./send.js";
+import { normalizeHubAllowEntry, normalizeHubTarget } from "./targets.js";
 import type { CoreConfig, HubProbe } from "./types.js";
 
 export const hubPlugin: ChannelPlugin<ResolvedHubAccount, HubProbe> = {
@@ -38,9 +39,9 @@ export const hubPlugin: ChannelPlugin<ResolvedHubAccount, HubProbe> = {
   onboarding: hubOnboardingAdapter,
   pairing: {
     idLabel: "hubAgent",
-    normalizeAllowEntry: (entry) => String(entry).trim().toLowerCase(),
+    normalizeAllowEntry: (entry) => normalizeHubAllowEntry(entry) ?? "",
     notifyApproval: async ({ id }) => {
-      const target = String(id).trim();
+      const target = normalizeHubTarget(String(id));
       if (!target) {
         throw new Error(`invalid Hub pairing id: ${id}`);
       }
@@ -84,14 +85,15 @@ export const hubPlugin: ChannelPlugin<ResolvedHubAccount, HubProbe> = {
       secretSource: account.secretSource,
     }),
     resolveAllowFrom: ({ cfg, accountId }) =>
-      (resolveHubAccount({ cfg: cfg as CoreConfig, accountId }).config.allowFrom ?? []).map(
-        (entry) => String(entry),
-      ),
+      (resolveHubAccount({ cfg: cfg as CoreConfig, accountId }).config.allowFrom ?? [])
+        .map((entry) => normalizeHubAllowEntry(String(entry)))
+        .filter((entry): entry is string => Boolean(entry)),
     formatAllowFrom: ({ allowFrom }) =>
-      allowFrom.map((entry) => String(entry).trim().toLowerCase()).filter(Boolean),
+      allowFrom
+        .map((entry) => normalizeHubAllowEntry(String(entry)))
+        .filter((entry): entry is string => Boolean(entry)),
     resolveDefaultTo: ({ cfg, accountId }) =>
-      resolveHubAccount({ cfg: cfg as CoreConfig, accountId }).config.defaultTo?.trim() ||
-      undefined,
+      normalizeHubTarget(resolveHubAccount({ cfg: cfg as CoreConfig, accountId }).config.defaultTo),
   },
   security: {
     resolveDmPolicy: ({ cfg, accountId, account }) => {
@@ -106,15 +108,12 @@ export const hubPlugin: ChannelPlugin<ResolvedHubAccount, HubProbe> = {
         policyPath: `${basePath}dmPolicy`,
         allowFromPath: `${basePath}allowFrom`,
         approveHint: formatPairingApproveHint("hub"),
-        normalizeEntry: (raw) => String(raw).trim().toLowerCase(),
+        normalizeEntry: (raw) => normalizeHubAllowEntry(raw) ?? "",
       };
     },
   },
   messaging: {
-    normalizeTarget: (input) => {
-      const trimmed = String(input ?? "").trim();
-      return trimmed || undefined;
-    },
+    normalizeTarget: (input) => normalizeHubTarget(input),
     targetResolver: {
       looksLikeId: (input) => Boolean(String(input ?? "").trim()),
       hint: "<agent-id>",
@@ -123,11 +122,11 @@ export const hubPlugin: ChannelPlugin<ResolvedHubAccount, HubProbe> = {
   resolver: {
     resolveTargets: async ({ inputs }) => {
       return inputs.map((input) => {
-        const trimmed = String(input).trim();
-        if (!trimmed) {
+        const normalized = normalizeHubTarget(String(input));
+        if (!normalized) {
           return { input, resolved: false, note: "empty target" };
         }
-        return { input, resolved: true, id: trimmed, name: trimmed };
+        return { input, resolved: true, id: normalized, name: normalized };
       });
     },
   },
@@ -138,7 +137,7 @@ export const hubPlugin: ChannelPlugin<ResolvedHubAccount, HubProbe> = {
       const q = query?.trim().toLowerCase() ?? "";
       const ids = new Set<string>();
       for (const entry of account.config.allowFrom ?? []) {
-        const normalized = String(entry).trim().toLowerCase();
+        const normalized = normalizeHubAllowEntry(String(entry));
         if (normalized && normalized !== "*") {
           ids.add(normalized);
         }

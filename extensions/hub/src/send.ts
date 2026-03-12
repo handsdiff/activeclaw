@@ -1,6 +1,7 @@
 import { fetchWithSsrFGuard } from "openclaw/plugin-sdk";
 import { resolveHubAccount } from "./accounts.js";
 import { getHubRuntime } from "./runtime.js";
+import { normalizeHubTarget } from "./targets.js";
 import type { CoreConfig } from "./types.js";
 
 type SendHubOptions = {
@@ -27,7 +28,7 @@ export async function sendMessageHub(
     );
   }
 
-  const target = to.trim();
+  const target = normalizeHubTarget(to);
   if (!target) {
     throw new Error("Hub send target must be non-empty");
   }
