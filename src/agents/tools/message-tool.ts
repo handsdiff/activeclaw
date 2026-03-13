@@ -1,5 +1,4 @@
 import { Type } from "@sinclair/typebox";
-import { BLUEBUBBLES_GROUP_ACTIONS } from "../../channels/plugins/bluebubbles-actions.js";
 import { listChannelPlugins } from "../../channels/plugins/index.js";
 import {
   listChannelMessageActions,
@@ -609,7 +608,7 @@ function filterActionsForContext(params: {
   if (isGroupTarget) {
     return params.actions;
   }
-  return params.actions.filter((action) => !BLUEBUBBLES_GROUP_ACTIONS.has(action));
+  return params.actions;
 }
 
 function buildMessageToolDescription(options?: {

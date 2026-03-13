@@ -98,8 +98,6 @@ export function createTestGatewayServer(options: {
   overrides?: GatewayServerOptions;
 }): GatewayHttpServer {
   return createGatewayHttpServer({
-    canvasHost: null,
-    clients: new Set(),
     openAiChatCompletionsEnabled: false,
     openResponsesEnabled: false,
     handleHooksRequest: async () => false,

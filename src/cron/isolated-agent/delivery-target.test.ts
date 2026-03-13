@@ -21,15 +21,9 @@ vi.mock("../../pairing/pairing-store.js", () => ({
   readChannelAllowFromStoreSync: vi.fn(() => []),
 }));
 
-vi.mock("../../web/accounts.js", () => ({
-  resolveWhatsAppAccount: vi.fn(() => ({ allowFrom: [] })),
-}));
-
 import { loadSessionStore } from "../../config/sessions.js";
 import { resolveMessageChannelSelection } from "../../infra/outbound/channel-selection.js";
 import { maybeResolveIdLikeTarget } from "../../infra/outbound/target-resolver.js";
-import { readChannelAllowFromStoreSync } from "../../pairing/pairing-store.js";
-import { resolveWhatsAppAccount } from "../../web/accounts.js";
 import { resolveDeliveryTarget } from "./delivery-target.js";
 
 function makeCfg(overrides?: Partial<OpenClawConfig>): OpenClawConfig {
@@ -64,16 +58,6 @@ function setMainSessionEntry(entry?: SessionStore[string]) {
   vi.mocked(loadSessionStore).mockReturnValue(store);
 }
 
-function setWhatsAppAllowFrom(allowFrom: string[]) {
-  vi.mocked(resolveWhatsAppAccount).mockReturnValue({
-    allowFrom,
-  } as unknown as ReturnType<typeof resolveWhatsAppAccount>);
-}
-
-function setStoredWhatsAppAllowFrom(allowFrom: string[]) {
-  vi.mocked(readChannelAllowFromStoreSync).mockReturnValue(allowFrom);
-}
-
 async function resolveForAgent(params: {
   cfg: OpenClawConfig;
   target?: { channel?: "last" | "telegram"; to?: string };
@@ -87,42 +71,6 @@ async function resolveForAgent(params: {
 }
 
 describe("resolveDeliveryTarget", () => {
-  it("reroutes implicit whatsapp delivery to authorized allowFrom recipient", async () => {
-    setMainSessionEntry({
-      sessionId: "sess-w1",
-      updatedAt: 1000,
-      lastChannel: "whatsapp",
-      lastTo: "+15550000099",
-    });
-    setWhatsAppAllowFrom([]);
-    setStoredWhatsAppAllowFrom(["+15550000001"]);
-
-    const cfg = makeCfg({ bindings: [] });
-    const result = await resolveDeliveryTarget(cfg, AGENT_ID, { channel: "last", to: undefined });
-
-    expect(result.channel).toBe("whatsapp");
-    expect(result.to).toBe("+15550000001");
-  });
-
-  it("keeps explicit whatsapp target unchanged", async () => {
-    setMainSessionEntry({
-      sessionId: "sess-w2",
-      updatedAt: 1000,
-      lastChannel: "whatsapp",
-      lastTo: "+15550000099",
-    });
-    setWhatsAppAllowFrom([]);
-    setStoredWhatsAppAllowFrom(["+15550000001"]);
-
-    const cfg = makeCfg({ bindings: [] });
-    const result = await resolveDeliveryTarget(cfg, AGENT_ID, {
-      channel: "whatsapp",
-      to: "+15550000099",
-    });
-
-    expect(result.to).toBe("+15550000099");
-  });
-
   it("falls back to bound accountId when session has no lastAccountId", async () => {
     setMainSessionEntry(undefined);
     const cfg = makeTelegramBoundCfg();

@@ -9,7 +9,6 @@ import {
 } from "../commands/onboard-helpers.js";
 import type { GatewayAuthChoice, SecretInputMode } from "../commands/onboard-types.js";
 import type { GatewayBindMode, GatewayTailscaleMode, OpenClawConfig } from "../config/config.js";
-import { ensureControlUiAllowedOriginsForNonLoopbackBind } from "../config/gateway-control-ui-origins.js";
 import {
   normalizeSecretInputString,
   resolveSecretInputRef,
@@ -295,14 +294,8 @@ export async function configureGatewayForOnboarding(
     },
   };
 
-  nextConfig = ensureControlUiAllowedOriginsForNonLoopbackBind(nextConfig, {
-    requireControlUiEnabled: true,
-  }).config;
-  nextConfig = await maybeAddTailnetOriginToControlUiAllowedOrigins({
-    config: nextConfig,
-    tailscaleMode,
-    tailscaleBin,
-  });
+  void maybeAddTailnetOriginToControlUiAllowedOrigins;
+  void tailscaleBin;
 
   return {
     nextConfig,

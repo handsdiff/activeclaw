@@ -40,7 +40,7 @@ type TelegramSendTestMocks = {
   maybePersistResolvedTelegramTarget: MockFn;
 };
 
-vi.mock("../web/media.js", () => ({
+vi.mock("../media/load-media.js", () => ({
   loadWebMedia,
 }));
 

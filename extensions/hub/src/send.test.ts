@@ -20,7 +20,7 @@ const {
   releaseMock: vi.fn(),
 }));
 
-vi.mock("openclaw/plugin-sdk", () => ({
+vi.mock("openclaw/plugin-sdk/compat", () => ({
   fetchWithSsrFGuard: fetchWithSsrFGuardMock,
 }));
 

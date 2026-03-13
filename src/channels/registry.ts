@@ -1,31 +1,14 @@
 import { requireActivePluginRegistry } from "../plugins/runtime.js";
-import type { ChannelMeta } from "./plugins/types.js";
-import type { ChannelId } from "./plugins/types.js";
+import type { ChannelId, ChannelMeta } from "./plugins/types.js";
 import { isSupportedChannelId } from "./supported.js";
 
-// Channel docking: add new core channels here (order + meta + aliases), then
-// register the plugin in its extension entrypoint and keep protocol IDs in sync.
-export const CHAT_CHANNEL_ORDER = [
-  "telegram",
-  "whatsapp",
-  "discord",
-  "irc",
-  "googlechat",
-  "slack",
-  "signal",
-  "imessage",
-  "line",
-] as const;
+export const CHAT_CHANNEL_ORDER = ["telegram"] as const;
 
 export type ChatChannelId = (typeof CHAT_CHANNEL_ORDER)[number];
 
-const SUPPORTED_CHAT_CHANNEL_ORDER = CHAT_CHANNEL_ORDER.filter((id) => isSupportedChannelId(id));
-
-export const CHANNEL_IDS = [...SUPPORTED_CHAT_CHANNEL_ORDER] as const;
+export const CHANNEL_IDS = [...CHAT_CHANNEL_ORDER] as const;
 
 export type ChatChannelMeta = ChannelMeta;
-
-const WEBSITE_URL = "https://openclaw.ai";
 
 const CHAT_CHANNEL_META: Record<ChatChannelId, ChannelMeta> = {
   telegram: {
@@ -35,108 +18,22 @@ const CHAT_CHANNEL_META: Record<ChatChannelId, ChannelMeta> = {
     detailLabel: "Telegram Bot",
     docsPath: "/channels/telegram",
     docsLabel: "telegram",
-    blurb: "simplest way to get started — register a bot with @BotFather and get going.",
+    blurb: "Bot API messaging with group, channel, and topic support.",
     systemImage: "paperplane",
-    selectionDocsPrefix: "",
-    selectionDocsOmitLabel: true,
-    selectionExtras: [WEBSITE_URL],
-  },
-  whatsapp: {
-    id: "whatsapp",
-    label: "WhatsApp",
-    selectionLabel: "WhatsApp (QR link)",
-    detailLabel: "WhatsApp Web",
-    docsPath: "/channels/whatsapp",
-    docsLabel: "whatsapp",
-    blurb: "works with your own number; recommend a separate phone + eSIM.",
-    systemImage: "message",
-  },
-  discord: {
-    id: "discord",
-    label: "Discord",
-    selectionLabel: "Discord (Bot API)",
-    detailLabel: "Discord Bot",
-    docsPath: "/channels/discord",
-    docsLabel: "discord",
-    blurb: "very well supported right now.",
-    systemImage: "bubble.left.and.bubble.right",
-  },
-  irc: {
-    id: "irc",
-    label: "IRC",
-    selectionLabel: "IRC (Server + Nick)",
-    detailLabel: "IRC",
-    docsPath: "/channels/irc",
-    docsLabel: "irc",
-    blurb: "classic IRC networks with DM/channel routing and pairing controls.",
-    systemImage: "network",
-  },
-  googlechat: {
-    id: "googlechat",
-    label: "Google Chat",
-    selectionLabel: "Google Chat (Chat API)",
-    detailLabel: "Google Chat",
-    docsPath: "/channels/googlechat",
-    docsLabel: "googlechat",
-    blurb: "Google Workspace Chat app with HTTP webhook.",
-    systemImage: "message.badge",
-  },
-  slack: {
-    id: "slack",
-    label: "Slack",
-    selectionLabel: "Slack (Socket Mode)",
-    detailLabel: "Slack Bot",
-    docsPath: "/channels/slack",
-    docsLabel: "slack",
-    blurb: "supported (Socket Mode).",
-    systemImage: "number",
-  },
-  signal: {
-    id: "signal",
-    label: "Signal",
-    selectionLabel: "Signal (signal-cli)",
-    detailLabel: "Signal REST",
-    docsPath: "/channels/signal",
-    docsLabel: "signal",
-    blurb: 'signal-cli linked device; more setup (David Reagans: "Hop on Discord.").',
-    systemImage: "antenna.radiowaves.left.and.right",
-  },
-  imessage: {
-    id: "imessage",
-    label: "iMessage",
-    selectionLabel: "iMessage (imsg)",
-    detailLabel: "iMessage",
-    docsPath: "/channels/imessage",
-    docsLabel: "imessage",
-    blurb: "this is still a work in progress.",
-    systemImage: "message.fill",
-  },
-  line: {
-    id: "line",
-    label: "LINE",
-    selectionLabel: "LINE (Messaging API)",
-    detailLabel: "LINE Bot",
-    docsPath: "/channels/line",
-    docsLabel: "line",
-    blurb: "LINE Messaging API webhook bot.",
-    systemImage: "message",
   },
 };
 
 export const CHAT_CHANNEL_ALIASES: Record<string, ChatChannelId> = {
-  imsg: "imessage",
-  "internet-relay-chat": "irc",
-  "google-chat": "googlechat",
-  gchat: "googlechat",
+  tg: "telegram",
 };
 
-const normalizeChannelKey = (raw?: string | null): string | undefined => {
+function normalizeChannelKey(raw?: string | null): string | undefined {
   const normalized = raw?.trim().toLowerCase();
   return normalized || undefined;
-};
+}
 
 export function listChatChannels(): ChatChannelMeta[] {
-  return SUPPORTED_CHAT_CHANNEL_ORDER.map((id) => CHAT_CHANNEL_META[id]);
+  return CHAT_CHANNEL_ORDER.map((id) => CHAT_CHANNEL_META[id]);
 }
 
 export function listChatChannelAliases(): string[] {
@@ -153,26 +50,24 @@ export function normalizeChatChannelId(raw?: string | null): ChatChannelId | nul
     return null;
   }
   const resolved = CHAT_CHANNEL_ALIASES[normalized] ?? normalized;
-  if (!CHAT_CHANNEL_ORDER.includes(resolved)) {
-    return null;
-  }
-  return isSupportedChannelId(resolved) ? (resolved as ChatChannelId) : null;
+  return CHAT_CHANNEL_ORDER.includes(resolved as ChatChannelId)
+    ? (resolved as ChatChannelId)
+    : null;
 }
 
-// Channel docking: prefer this helper in shared code. Importing from
-// `src/channels/plugins/*` can eagerly load channel implementations.
 export function normalizeChannelId(raw?: string | null): ChatChannelId | null {
   return normalizeChatChannelId(raw);
 }
 
-// Normalizes registered channel plugins (bundled or external).
-//
-// Keep this light: we do not import channel plugins here (those are "heavy" and can pull in
-// monitors, web login, etc). The plugin registry must be initialized first.
 export function normalizeAnyChannelId(raw?: string | null): ChannelId | null {
   const key = normalizeChannelKey(raw);
   if (!key) {
     return null;
+  }
+
+  const builtIn = normalizeChatChannelId(key);
+  if (builtIn) {
+    return builtIn;
   }
 
   const registry = requireActivePluginRegistry();
@@ -199,11 +94,5 @@ export function formatChannelSelectionLine(
   meta: ChatChannelMeta,
   docsLink: (path: string, label?: string) => string,
 ): string {
-  const docsPrefix = meta.selectionDocsPrefix ?? "Docs:";
-  const docsLabel = meta.docsLabel ?? meta.id;
-  const docs = meta.selectionDocsOmitLabel
-    ? docsLink(meta.docsPath)
-    : docsLink(meta.docsPath, docsLabel);
-  const extras = (meta.selectionExtras ?? []).filter(Boolean).join(" ");
-  return `${meta.label} — ${meta.blurb} ${docsPrefix ? `${docsPrefix} ` : ""}${docs}${extras ? ` ${extras}` : ""}`;
+  return `${meta.label} - ${meta.blurb} Docs: ${docsLink(meta.docsPath, meta.docsLabel ?? meta.id)}`;
 }

@@ -41,7 +41,7 @@ const {
   sendMessageHubMock: vi.fn(),
 }));
 
-vi.mock("openclaw/plugin-sdk", () => ({
+vi.mock("openclaw/plugin-sdk/compat", () => ({
   createScopedPairingAccess: createScopedPairingAccessMock,
   createNormalizedOutboundDeliverer: createNormalizedOutboundDelivererMock,
   createReplyPrefixOptions: createReplyPrefixOptionsMock,

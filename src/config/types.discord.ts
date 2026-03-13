@@ -1,4 +1,3 @@
-import type { DiscordPluralKitConfig } from "../discord/pluralkit.js";
 import type {
   BlockStreamingChunkConfig,
   BlockStreamingCoalesceConfig,
@@ -13,6 +12,11 @@ import type { DmConfig, ProviderCommandsConfig } from "./types.messages.js";
 import type { SecretInput } from "./types.secrets.js";
 import type { GroupToolPolicyBySenderConfig, GroupToolPolicyConfig } from "./types.tools.js";
 import type { TtsConfig } from "./types.tts.js";
+
+export type DiscordPluralKitConfig = {
+  enabled?: boolean;
+  token?: SecretInput;
+};
 
 export type DiscordStreamMode = "off" | "partial" | "block" | "progress";
 

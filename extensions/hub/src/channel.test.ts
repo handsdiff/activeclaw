@@ -23,7 +23,7 @@ const {
   setAccountEnabledInConfigSectionMock: vi.fn(() => ({})),
 }));
 
-vi.mock("openclaw/plugin-sdk", () => ({
+vi.mock("openclaw/plugin-sdk/compat", () => ({
   buildBaseAccountStatusSnapshot: vi.fn(() => ({})),
   buildBaseChannelStatusSummary: vi.fn(() => ({})),
   buildChannelConfigSchema: vi.fn((schema: unknown) => schema),

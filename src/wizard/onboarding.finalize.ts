@@ -23,8 +23,6 @@ import type { OpenClawConfig } from "../config/config.js";
 import { resolveGatewayService } from "../daemon/service.js";
 import { isSystemdUserServiceAvailable } from "../daemon/systemd.js";
 import type { RuntimeEnv } from "../runtime.js";
-import { restoreTerminalState } from "../terminal/restore.js";
-import { runTui } from "../tui/tui.js";
 import { resolveUserPath } from "../utils.js";
 import { setupOnboardingShellCompletion } from "./onboarding.completion.js";
 import { resolveOnboardingSecretInputString } from "./onboarding.secret-input.js";
@@ -290,7 +288,6 @@ export async function finalizeOnboardingWizard(
     "Gateway",
   );
 
-  let hatchChoice: "tui" | "later" | null = null;
   let launchedTui = false;
 
   if (!opts.skipUi && gatewayProbe.ok) {
@@ -308,40 +305,17 @@ export async function finalizeOnboardingWizard(
 
     await prompter.note(
       [
-        "Gateway token authenticates local tools like the TUI.",
+        "Gateway token authenticates local tools and hosted agent rebuild workflows.",
         "Stored in: ~/.openclaw/openclaw.json (gateway.auth.token) or OPENCLAW_GATEWAY_TOKEN.",
         `View token: ${formatCliCommand("openclaw config get gateway.auth.token")}`,
         `Generate token: ${formatCliCommand("openclaw doctor --generate-gateway-token")}`,
-        `Start the TUI anytime: ${formatCliCommand("openclaw tui")}`,
+        `Check status anytime: ${formatCliCommand("openclaw gateway status")}`,
+        `Tail logs anytime: ${formatCliCommand("openclaw logs")}`,
       ].join("\n"),
       "Token",
     );
-
-    hatchChoice = await prompter.select({
-      message: "How do you want to hatch your bot?",
-      options: [
-        { value: "tui", label: "Hatch in TUI (recommended)" },
-        { value: "later", label: "Do this later" },
-      ],
-      initialValue: "tui",
-    });
-
-    if (hatchChoice === "tui") {
-      restoreTerminalState("pre-onboarding tui", { resumeStdinIfPaused: true });
-      await runTui({
-        url: links.wsUrl,
-        token: settings.authMode === "token" ? settings.gatewayToken : undefined,
-        password: settings.authMode === "password" ? resolvedGatewayPassword : "",
-        // Safety: onboarding TUI should not auto-deliver to lastProvider/lastTo.
-        deliver: false,
-        message: hasBootstrap ? "Wake up, my friend!" : undefined,
-      });
-      launchedTui = true;
-    } else {
-      await prompter.note(`When you're ready: ${formatCliCommand("openclaw tui")}`, "Later");
-    }
   } else if (opts.skipUi) {
-    await prompter.note("Skipping TUI prompt.", "TUI");
+    await prompter.note("Skipping interactive post-onboarding prompt.", "Next steps");
   }
 
   await prompter.note(
@@ -448,7 +422,7 @@ export async function finalizeOnboardingWizard(
   await prompter.outro(
     launchedTui
       ? "Onboarding complete. TUI launched."
-      : `Onboarding complete. Start the TUI with ${formatCliCommand("openclaw tui")}.`,
+      : `Onboarding complete. Use ${formatCliCommand("openclaw gateway status")} and ${formatCliCommand("openclaw logs")} to operate the gateway.`,
   );
 
   return { launchedTui };

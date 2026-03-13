@@ -115,15 +115,6 @@ const entries: SubCliEntry[] = [
     },
   },
   {
-    name: "tui",
-    description: "Open a terminal UI connected to the Gateway",
-    hasSubcommands: false,
-    register: async (program) => {
-      const mod = await import("../tui-cli.js");
-      mod.registerTuiCli(program);
-    },
-  },
-  {
     name: "cron",
     description: "Manage cron jobs via the Gateway scheduler",
     hasSubcommands: true,
@@ -201,7 +192,7 @@ const entries: SubCliEntry[] = [
   },
   {
     name: "channels",
-    description: "Manage connected chat channels (Telegram, Discord, etc.)",
+    description: "Manage connected chat channels",
     hasSubcommands: true,
     register: async (program) => {
       const mod = await import("../channels-cli.js");

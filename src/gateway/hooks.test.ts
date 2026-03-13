@@ -1,9 +1,9 @@
 import type { IncomingMessage } from "node:http";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import type { ChannelPlugin } from "../channels/plugins/types.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
-import { createMSTeamsTestPlugin, createTestRegistry } from "../test-utils/channel-plugins.js";
-import { createIMessageTestPlugin } from "../test-utils/imessage-test-plugin.js";
+import { createChannelTestPluginBase, createTestRegistry } from "../test-utils/channel-plugins.js";
 import {
   extractHookToken,
   isHookAgentAllowed,
@@ -110,34 +110,26 @@ describe("gateway hooks helpers", () => {
       expect(explicitNoDeliver.value.deliver).toBe(false);
     }
 
+    const aliasPlugin: ChannelPlugin = {
+      ...createChannelTestPluginBase({ id: "telegram", label: "Telegram" }),
+      meta: {
+        ...createChannelTestPluginBase({ id: "telegram", label: "Telegram" }).meta,
+        aliases: ["tg"],
+      },
+    };
     setActivePluginRegistry(
       createTestRegistry([
         {
-          pluginId: "imessage",
+          pluginId: "telegram",
           source: "test",
-          plugin: createIMessageTestPlugin(),
+          plugin: aliasPlugin,
         },
       ]),
     );
-    const imsg = normalizeAgentPayload({ message: "yo", channel: "imsg" });
-    expect(imsg.ok).toBe(true);
-    if (imsg.ok) {
-      expect(imsg.value.channel).toBe("imessage");
-    }
-
-    setActivePluginRegistry(
-      createTestRegistry([
-        {
-          pluginId: "msteams",
-          source: "test",
-          plugin: createMSTeamsTestPlugin({ aliases: ["teams"] }),
-        },
-      ]),
-    );
-    const teams = normalizeAgentPayload({ message: "yo", channel: "teams" });
-    expect(teams.ok).toBe(true);
-    if (teams.ok) {
-      expect(teams.value.channel).toBe("msteams");
+    const alias = normalizeAgentPayload({ message: "yo", channel: "tg" });
+    expect(alias.ok).toBe(true);
+    if (alias.ok) {
+      expect(alias.value.channel).toBe("telegram");
     }
 
     const bad = normalizeAgentPayload({ message: "yo", channel: "sms" });

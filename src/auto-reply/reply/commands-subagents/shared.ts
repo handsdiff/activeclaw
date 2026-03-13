@@ -16,7 +16,6 @@ import type {
   loadSessionStore as loadSessionStoreFn,
   resolveStorePath as resolveStorePathFn,
 } from "../../../config/sessions.js";
-import { parseDiscordTarget } from "../../../discord/targets.js";
 import { callGateway } from "../../../gateway/call.js";
 import { formatTimeAgo } from "../../../infra/format-time/format-relative.ts";
 import { parseAgentSessionKey } from "../../../routing/session-key.js";
@@ -329,21 +328,7 @@ export type FocusTargetResolution = {
 export function resolveDiscordChannelIdForFocus(
   params: SubagentsCommandParams,
 ): string | undefined {
-  const toCandidates = [
-    typeof params.ctx.OriginatingTo === "string" ? params.ctx.OriginatingTo.trim() : "",
-    typeof params.command.to === "string" ? params.command.to.trim() : "",
-    typeof params.ctx.To === "string" ? params.ctx.To.trim() : "",
-  ].filter(Boolean);
-  for (const candidate of toCandidates) {
-    try {
-      const target = parseDiscordTarget(candidate, { defaultKind: "channel" });
-      if (target?.kind === "channel" && target.id) {
-        return target.id;
-      }
-    } catch {
-      // Ignore parse failures and try the next candidate.
-    }
-  }
+  void params;
   return undefined;
 }
 

@@ -35,7 +35,6 @@ import {
 } from "../../utils/message-channel.js";
 import { resolveAssistantIdentity } from "../assistant-identity.js";
 import { parseMessageWithAttachments } from "../chat-attachments.js";
-import { resolveAssistantAvatarUrl } from "../control-ui-shared.js";
 import { ADMIN_SCOPE } from "../method-scopes.js";
 import { GATEWAY_CLIENT_CAPS, hasGatewayClientCap } from "../protocol/client-info.js";
 import {
@@ -684,12 +683,7 @@ export const agentHandlers: GatewayRequestHandlers = {
     }
     const cfg = loadConfig();
     const identity = resolveAssistantIdentity({ cfg, agentId });
-    const avatarValue =
-      resolveAssistantAvatarUrl({
-        avatar: identity.avatar,
-        agentId: identity.agentId,
-      }) ?? identity.avatar;
-    respond(true, { ...identity, avatar: avatarValue }, undefined);
+    respond(true, identity, undefined);
   },
   "agent.wait": async ({ params, respond, context }) => {
     if (!validateAgentWaitParams(params)) {

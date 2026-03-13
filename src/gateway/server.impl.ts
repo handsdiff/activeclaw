@@ -2,7 +2,6 @@ import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent
 import { getActiveEmbeddedRunCount } from "../agents/pi-embedded-runner/runs.js";
 import { initSubagentRegistry } from "../agents/subagent-registry.js";
 import { getTotalPendingReplies } from "../auto-reply/reply/dispatcher-registry.js";
-import type { CanvasHostServer } from "../canvas-host/server.js";
 import { type ChannelId, listChannelPlugins } from "../channels/plugins/index.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import { createDefaultDeps } from "../cli/deps.js";
@@ -126,6 +125,11 @@ const logPlugins = log.child("plugins");
 const logWsControl = log.child("ws");
 const logSecrets = log.child("secrets");
 const canvasRuntime = runtimeForLogger(logCanvas);
+
+type CanvasHostServer = {
+  port?: number;
+  close: () => Promise<void> | void;
+};
 
 type AuthRateLimitConfig = Parameters<typeof createAuthRateLimiter>[0];
 
