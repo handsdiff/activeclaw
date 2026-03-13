@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
+import { isSupportedChannelId } from "../channels/supported.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { GatewayRequestHandler } from "../gateway/server-methods/types.js";
 import { openBoundaryFileSync } from "../infra/boundary-file-read.js";
@@ -624,6 +625,21 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
         message: record.error,
       });
     };
+
+    const unsupportedManifestChannels = manifestRecord.channels.filter(
+      (channelId) => !isSupportedChannelId(channelId),
+    );
+    if (
+      unsupportedManifestChannels.length > 0 &&
+      unsupportedManifestChannels.length === manifestRecord.channels.length
+    ) {
+      record.status = "disabled";
+      record.error =
+        "disabled by activeclaw channel policy: " + unsupportedManifestChannels.join(", ");
+      registry.plugins.push(record);
+      seenIds.set(pluginId, candidate.origin);
+      continue;
+    }
 
     if (!enableState.enabled) {
       record.status = "disabled";

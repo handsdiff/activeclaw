@@ -14,6 +14,7 @@ import { buildOutboundSessionContext } from "../../infra/outbound/session-contex
 import { maybeResolveIdLikeTarget } from "../../infra/outbound/target-resolver.js";
 import { resolveOutboundTarget } from "../../infra/outbound/targets.js";
 import { normalizePollInput } from "../../polls.js";
+import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import {
   ErrorCodes,
   errorShape,
@@ -63,11 +64,14 @@ async function resolveRequestedChannel(params: {
   const normalizedChannel = channelInput ? normalizeChannelId(channelInput) : null;
   if (channelInput && !normalizedChannel) {
     const normalizedInput = channelInput.trim().toLowerCase();
-    if (params.rejectWebchatAsInternalOnly && normalizedInput === "webchat") {
+    if (
+      params.rejectWebchatAsInternalOnly &&
+      (normalizedInput === "webchat" || normalizedInput === INTERNAL_MESSAGE_CHANNEL)
+    ) {
       return {
         error: errorShape(
           ErrorCodes.INVALID_REQUEST,
-          "unsupported channel: webchat (internal-only). Use `chat.send` for WebChat UI messages or choose a deliverable channel.",
+          `unsupported channel: ${normalizedInput} (internal-only). Use chat.send for internal sessions or choose a deliverable channel.`,
         ),
       };
     }

@@ -5,6 +5,7 @@ import { discoverOpenClawPlugins } from "../../plugins/discovery.js";
 import type { OpenClawPackageManifest } from "../../plugins/manifest.js";
 import type { PluginOrigin } from "../../plugins/types.js";
 import { CONFIG_DIR, isRecord, resolveUserPath } from "../../utils.js";
+import { isSupportedChannelId } from "../supported.js";
 import type { ChannelMeta } from "./types.js";
 
 export type ChannelUiMetaEntry = {
@@ -285,6 +286,7 @@ export function listChannelPluginCatalogEntries(
 
   return Array.from(resolved.values())
     .map(({ entry }) => entry)
+    .filter((entry) => isSupportedChannelId(entry.id))
     .toSorted((a, b) => {
       const orderA = a.meta.order ?? 999;
       const orderB = b.meta.order ?? 999;

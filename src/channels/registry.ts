@@ -1,6 +1,7 @@
 import { requireActivePluginRegistry } from "../plugins/runtime.js";
 import type { ChannelMeta } from "./plugins/types.js";
 import type { ChannelId } from "./plugins/types.js";
+import { isSupportedChannelId } from "./supported.js";
 
 // Channel docking: add new core channels here (order + meta + aliases), then
 // register the plugin in its extension entrypoint and keep protocol IDs in sync.
@@ -18,7 +19,9 @@ export const CHAT_CHANNEL_ORDER = [
 
 export type ChatChannelId = (typeof CHAT_CHANNEL_ORDER)[number];
 
-export const CHANNEL_IDS = [...CHAT_CHANNEL_ORDER] as const;
+const SUPPORTED_CHAT_CHANNEL_ORDER = CHAT_CHANNEL_ORDER.filter((id) => isSupportedChannelId(id));
+
+export const CHANNEL_IDS = [...SUPPORTED_CHAT_CHANNEL_ORDER] as const;
 
 export type ChatChannelMeta = ChannelMeta;
 
@@ -133,7 +136,7 @@ const normalizeChannelKey = (raw?: string | null): string | undefined => {
 };
 
 export function listChatChannels(): ChatChannelMeta[] {
-  return CHAT_CHANNEL_ORDER.map((id) => CHAT_CHANNEL_META[id]);
+  return SUPPORTED_CHAT_CHANNEL_ORDER.map((id) => CHAT_CHANNEL_META[id]);
 }
 
 export function listChatChannelAliases(): string[] {
@@ -150,7 +153,10 @@ export function normalizeChatChannelId(raw?: string | null): ChatChannelId | nul
     return null;
   }
   const resolved = CHAT_CHANNEL_ALIASES[normalized] ?? normalized;
-  return CHAT_CHANNEL_ORDER.includes(resolved) ? resolved : null;
+  if (!CHAT_CHANNEL_ORDER.includes(resolved)) {
+    return null;
+  }
+  return isSupportedChannelId(resolved) ? (resolved as ChatChannelId) : null;
 }
 
 // Channel docking: prefer this helper in shared code. Importing from
@@ -174,10 +180,13 @@ export function normalizeAnyChannelId(raw?: string | null): ChannelId | null {
     const id = String(entry.plugin.id ?? "")
       .trim()
       .toLowerCase();
-    if (id && id === key) {
+    if (id && id === key && isSupportedChannelId(id)) {
       return true;
     }
-    return (entry.plugin.meta.aliases ?? []).some((alias) => alias.trim().toLowerCase() === key);
+    return (
+      isSupportedChannelId(entry.plugin.id) &&
+      (entry.plugin.meta.aliases ?? []).some((alias) => alias.trim().toLowerCase() === key)
+    );
   });
   return hit?.plugin.id ?? null;
 }

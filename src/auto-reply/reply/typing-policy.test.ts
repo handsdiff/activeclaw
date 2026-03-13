@@ -13,13 +13,13 @@ describe("resolveRunTypingPolicy", () => {
     });
   });
 
-  it("forces internal webchat policy", () => {
+  it("forces internal policy for the legacy webchat alias", () => {
     const resolved = resolveRunTypingPolicy({
       requestedPolicy: "user_message",
       originatingChannel: "webchat",
     });
     expect(resolved).toEqual({
-      typingPolicy: "internal_webchat",
+      typingPolicy: "internal",
       suppressTyping: true,
     });
   });

@@ -5,6 +5,7 @@ import { loadConfig } from "../config/config.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
 import { stripInlineDirectiveTagsForDisplay } from "../utils/directive-tags.js";
+import { INTERNAL_MESSAGE_CHANNEL } from "../utils/message-channel.js";
 import { loadSessionEntry } from "./session-utils.js";
 import { formatForLog } from "./ws-log.js";
 
@@ -45,7 +46,7 @@ function shouldHideHeartbeatChatOutput(runId: string, sourceRunId?: string): boo
 
   try {
     const cfg = loadConfig();
-    const visibility = resolveHeartbeatVisibility({ cfg, channel: "webchat" });
+    const visibility = resolveHeartbeatVisibility({ cfg, channel: INTERNAL_MESSAGE_CHANNEL });
     return !visibility.showOk;
   } catch {
     // Default to suppressing if we can't load config

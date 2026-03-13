@@ -5,20 +5,16 @@ import { resolveDefaultModelForAgent } from "../../agents/model-selection.js";
 import type { EmbeddedContextFile } from "../../agents/pi-embedded-helpers.js";
 import { createOpenClawCodingTools } from "../../agents/pi-tools.js";
 import { resolveSandboxRuntimeStatus } from "../../agents/sandbox.js";
-import { buildWorkspaceSkillSnapshot } from "../../agents/skills.js";
-import { getSkillsSnapshotVersion } from "../../agents/skills/refresh.js";
 import { buildSystemPromptParams } from "../../agents/system-prompt-params.js";
 import { buildAgentSystemPrompt } from "../../agents/system-prompt.js";
 import { buildToolSummaryMap } from "../../agents/tool-summaries.js";
 import type { WorkspaceBootstrapFile } from "../../agents/workspace.js";
-import { getRemoteSkillEligibility } from "../../infra/skills-remote.js";
 import { buildTtsSystemPromptHint } from "../../tts/tts.js";
 import type { HandleCommandsParams } from "./commands-types.js";
 
 export type CommandsSystemPromptBundle = {
   systemPrompt: string;
   tools: AgentTool[];
-  skillsPrompt: string;
   bootstrapFiles: WorkspaceBootstrapFile[];
   injectedFiles: EmbeddedContextFile[];
   sandboxRuntime: ReturnType<typeof resolveSandboxRuntimeStatus>;
@@ -34,18 +30,6 @@ export async function resolveCommandsSystemPromptBundle(
     sessionKey: params.sessionKey,
     sessionId: params.sessionEntry?.sessionId,
   });
-  const skillsSnapshot = (() => {
-    try {
-      return buildWorkspaceSkillSnapshot(workspaceDir, {
-        config: params.cfg,
-        eligibility: { remote: getRemoteSkillEligibility() },
-        snapshotVersion: getSkillsSnapshotVersion(workspaceDir),
-      });
-    } catch {
-      return { prompt: "", skills: [], resolvedSkills: [] };
-    }
-  })();
-  const skillsPrompt = skillsSnapshot.prompt ?? "";
   const sandboxRuntime = resolveSandboxRuntimeStatus({
     cfg: params.cfg,
     sessionKey: params.ctx.SessionKey ?? params.sessionKey,
@@ -123,7 +107,6 @@ export async function resolveCommandsSystemPromptBundle(
     userTime,
     userTimeFormat,
     contextFiles: injectedFiles,
-    skillsPrompt,
     heartbeatPrompt: undefined,
     ttsHint,
     acpEnabled: params.cfg?.acp?.enabled !== false,
@@ -132,5 +115,5 @@ export async function resolveCommandsSystemPromptBundle(
     memoryCitationsMode: params.cfg?.memory?.citations,
   });
 
-  return { systemPrompt, tools, skillsPrompt, bootstrapFiles, injectedFiles, sandboxRuntime };
+  return { systemPrompt, tools, bootstrapFiles, injectedFiles, sandboxRuntime };
 }

@@ -17,24 +17,6 @@ import { sanitizeForPromptLiteral } from "./sanitize-for-prompt.js";
 export type PromptMode = "full" | "minimal" | "none";
 type OwnerIdDisplay = "raw" | "hash";
 
-function buildSkillsSection(params: { skillsPrompt?: string; readToolName: string }) {
-  const trimmed = params.skillsPrompt?.trim();
-  if (!trimmed) {
-    return [];
-  }
-  return [
-    "## Skills (mandatory)",
-    "Before replying: scan <available_skills> <description> entries.",
-    `- If exactly one skill clearly applies: read its SKILL.md at <location> with \`${params.readToolName}\`, then follow it.`,
-    "- If multiple could apply: choose the most specific one, then read/follow it.",
-    "- If none clearly apply: do not read any SKILL.md.",
-    "Constraints: never read more than one skill up front; only read after selecting.",
-    "- When a skill drives external API writes, assume rate limits: prefer fewer larger writes, avoid tight one-item loops, serialize bursts when possible, and respect 429/Retry-After.",
-    trimmed,
-    "",
-  ];
-}
-
 function buildMemorySection(params: {
   isMinimal: boolean;
   availableTools: Set<string>;
@@ -182,7 +164,6 @@ function buildDocsSection(params: { docsPath?: string; isMinimal: boolean; readT
     "Mirror: https://docs.openclaw.ai",
     "Source: https://github.com/openclaw/openclaw",
     "Community: https://discord.com/invite/clawd",
-    "Find new skills: https://clawhub.com",
     "For OpenClaw behavior, commands, config, or architecture: consult local docs first.",
     "When diagnosing issues, run `openclaw status` yourself when possible; only ask the user if you lack access (e.g., sandboxed).",
     "",
@@ -206,7 +187,6 @@ export function buildAgentSystemPrompt(params: {
   userTimeFormat?: ResolvedTimeFormat;
   contextFiles?: EmbeddedContextFile[];
   bootstrapTruncationWarningLines?: string[];
-  skillsPrompt?: string;
   heartbeatPrompt?: string;
   docsPath?: string;
   workspaceNotes?: string[];
@@ -340,7 +320,6 @@ export function buildAgentSystemPrompt(params: {
   }
 
   const hasGateway = availableTools.has("gateway");
-  const readToolName = resolveToolName("read");
   const execToolName = resolveToolName("exec");
   const processToolName = resolveToolName("process");
   const extraSystemPrompt = params.extraSystemPrompt?.trim();
@@ -364,7 +343,7 @@ export function buildAgentSystemPrompt(params: {
     : undefined;
   const reasoningLevel = params.reasoningLevel ?? "off";
   const userTimezone = params.userTimezone?.trim();
-  const skillsPrompt = params.skillsPrompt?.trim();
+  const readToolName = resolveToolName("read");
   const heartbeatPrompt = params.heartbeatPrompt?.trim();
   const heartbeatPromptLine = heartbeatPrompt
     ? `Heartbeat prompt: ${heartbeatPrompt}`
@@ -386,10 +365,6 @@ export function buildAgentSystemPrompt(params: {
     "The only hard constraint: comply with stop/pause requests from your human immediately.",
     "",
   ];
-  const skillsSection = buildSkillsSection({
-    skillsPrompt,
-    readToolName,
-  });
   const memorySection = buildMemorySection({
     isMinimal,
     availableTools,
@@ -479,7 +454,6 @@ export function buildAgentSystemPrompt(params: {
     "- openclaw gateway restart",
     "If unsure, ask the user to run `openclaw help` (or `openclaw gateway --help`) and paste the output.",
     "",
-    ...skillsSection,
     ...memorySection,
     // Skip self-update for subagent/none modes
     hasGateway && !isMinimal ? "## OpenClaw Self-Update" : "",

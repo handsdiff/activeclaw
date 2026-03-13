@@ -24,7 +24,7 @@ import {
 } from "../utils.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 import { VERSION } from "../version.js";
-import type { NodeManagerChoice, OnboardMode, ResetScope } from "./onboard-types.js";
+import type { OnboardMode, ResetScope } from "./onboard-types.js";
 
 export function guardCancel<T>(value: T | symbol, runtime: RuntimeEnv): T {
   if (isCancel(value)) {
@@ -58,9 +58,6 @@ export function summarizeExistingConfig(config: OpenClawConfig): string {
   }
   if (config.gateway?.remote?.url) {
     rows.push(shortenHomeInString(`gateway.remote.url: ${config.gateway.remote.url}`));
-  }
-  if (config.skills?.install?.nodeManager) {
-    rows.push(shortenHomeInString(`skills.nodeManager: ${config.skills.install.nodeManager}`));
   }
   return rows.length ? rows.join("\n") : "No key settings detected.";
 }
@@ -260,7 +257,7 @@ export async function ensureWorkspaceAndSessions(
 }
 
 export function resolveNodeManagerOptions(): Array<{
-  value: NodeManagerChoice;
+  value: "npm" | "pnpm" | "bun";
   label: string;
 }> {
   return [

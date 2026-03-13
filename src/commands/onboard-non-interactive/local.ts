@@ -16,7 +16,6 @@ import type { OnboardOptions } from "../onboard-types.js";
 import { inferAuthChoiceFromFlags } from "./local/auth-choice-inference.js";
 import { applyNonInteractiveGatewayConfig } from "./local/gateway-config.js";
 import { logNonInteractiveOnboardingJson } from "./local/output.js";
-import { applyNonInteractiveSkillsConfig } from "./local/skills-config.js";
 import { resolveNonInteractiveWorkspaceDir } from "./local/workspace.js";
 
 export async function runNonInteractiveOnboardingLocal(params: {
@@ -75,8 +74,6 @@ export async function runNonInteractiveOnboardingLocal(params: {
   }
   nextConfig = gatewayResult.nextConfig;
 
-  nextConfig = applyNonInteractiveSkillsConfig({ nextConfig, opts, runtime });
-
   nextConfig = applyWizardMetadata(nextConfig, { command: "onboard", mode });
   await writeConfigFile(nextConfig);
   logConfigUpdated(runtime);
@@ -125,7 +122,6 @@ export async function runNonInteractiveOnboardingLocal(params: {
     },
     installDaemon: Boolean(opts.installDaemon),
     daemonRuntime: opts.installDaemon ? daemonRuntimeRaw : undefined,
-    skipSkills: Boolean(opts.skipSkills),
     skipHealth: Boolean(opts.skipHealth),
   });
 

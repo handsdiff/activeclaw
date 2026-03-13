@@ -18,6 +18,7 @@ import {
   type InputImageSource,
 } from "../media/input-files.js";
 import { defaultRuntime } from "../runtime.js";
+import { INTERNAL_MESSAGE_CHANNEL } from "../utils/message-channel.js";
 import { resolveAssistantStreamDeltaText } from "./agent-event-assistant-text.js";
 import {
   buildAgentMessageFromConversationEntries,
@@ -436,7 +437,7 @@ export async function handleOpenAiHttpRequest(
     model,
     user,
     sessionPrefix: "openai",
-    defaultMessageChannel: "webchat",
+    defaultMessageChannel: INTERNAL_MESSAGE_CHANNEL,
     useMessageChannelHeader: true,
   });
   const activeTurnContext = resolveActiveTurnContext(payload.messages);

@@ -82,7 +82,7 @@ describe("channel plugin registry", () => {
     );
     setActivePluginRegistry(registry);
     const pluginIds = listChannelPlugins().map((plugin) => plugin.id);
-    expect(pluginIds).toEqual(["telegram", "slack", "signal"]);
+    expect(pluginIds).toEqual(["telegram"]);
   });
 
   it("refreshes cached channel lookups when the same registry instance is re-activated", () => {
@@ -94,7 +94,7 @@ describe("channel plugin registry", () => {
       },
     ]);
     setActivePluginRegistry(registry, "registry-test");
-    expect(listChannelPlugins().map((plugin) => plugin.id)).toEqual(["slack"]);
+    expect(listChannelPlugins().map((plugin) => plugin.id)).toEqual([]);
 
     registry.channels = [
       {
@@ -110,18 +110,17 @@ describe("channel plugin registry", () => {
 });
 
 describe("channel plugin catalog", () => {
-  it("includes Microsoft Teams", () => {
+  it("filters unsupported bundled channel entries", () => {
     const entry = getChannelPluginCatalogEntry("msteams");
-    expect(entry?.install.npmSpec).toBe("@openclaw/msteams");
-    expect(entry?.meta.aliases).toContain("teams");
+    expect(entry).toBeUndefined();
   });
 
-  it("lists plugin catalog entries", () => {
+  it("lists only supported channel catalog entries", () => {
     const ids = listChannelPluginCatalogEntries().map((entry) => entry.id);
-    expect(ids).toContain("msteams");
+    expect(ids).not.toContain("msteams");
   });
 
-  it("includes external catalog entries", () => {
+  it("filters unsupported external catalog entries", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-catalog-"));
     const catalogPath = path.join(dir, "catalog.json");
     fs.writeFileSync(
@@ -151,7 +150,7 @@ describe("channel plugin catalog", () => {
     const ids = listChannelPluginCatalogEntries({ catalogPaths: [catalogPath] }).map(
       (entry) => entry.id,
     );
-    expect(ids).toContain("demo-channel");
+    expect(ids).not.toContain("demo-channel");
   });
 });
 

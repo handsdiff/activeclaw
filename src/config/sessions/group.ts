@@ -1,9 +1,13 @@
 import type { MsgContext } from "../../auto-reply/templating.js";
 import { normalizeHyphenSlug } from "../../shared/string-normalization.js";
-import { listDeliverableMessageChannels } from "../../utils/message-channel.js";
+import {
+  INTERNAL_MESSAGE_CHANNEL,
+  listDeliverableMessageChannels,
+} from "../../utils/message-channel.js";
 import type { GroupKeyResolution } from "./types.js";
 
-const getGroupSurfaces = () => new Set<string>([...listDeliverableMessageChannels(), "webchat"]);
+const getGroupSurfaces = () =>
+  new Set<string>([...listDeliverableMessageChannels(), INTERNAL_MESSAGE_CHANNEL]);
 
 function normalizeGroupLabel(raw?: string) {
   return normalizeHyphenSlug(raw);

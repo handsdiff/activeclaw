@@ -120,10 +120,7 @@ async function runOnboardingAndReadConfig(
   env: OnboardEnv,
   options: Record<string, unknown>,
 ): Promise<ProviderAuthConfigSnapshot> {
-  await runNonInteractiveOnboardingWithDefaults(env.runtime, {
-    skipSkills: true,
-    ...options,
-  });
+  await runNonInteractiveOnboardingWithDefaults(env.runtime, options);
   return readJsonFile<ProviderAuthConfigSnapshot>(env.configPath);
 }
 
@@ -139,7 +136,6 @@ async function runCustomLocalNonInteractive(
     authChoice: "custom-api-key",
     customBaseUrl: CUSTOM_LOCAL_BASE_URL,
     customModelId: CUSTOM_LOCAL_MODEL_ID,
-    skipSkills: true,
     ...overrides,
   });
 }
@@ -415,7 +411,6 @@ describe("onboard (non-interactive): provider auth", () => {
           authChoice,
           secretInputMode: "ref", // pragma: allowlist secret
           [optionKey]: providedSecret,
-          skipSkills: true,
         };
         const envOverrides: Record<string, string | undefined> = {
           [envVar]: undefined,
@@ -453,7 +448,6 @@ describe("onboard (non-interactive): provider auth", () => {
           await runNonInteractiveOnboardingWithDefaults(runtime, {
             authChoice: "opencode-zen",
             secretInputMode: "ref", // pragma: allowlist secret
-            skipSkills: true,
           });
 
           const store = ensureAuthProfileStore();
@@ -479,7 +473,6 @@ describe("onboard (non-interactive): provider auth", () => {
       await expect(
         runNonInteractiveOnboardingWithDefaults(runtime, {
           authChoice: "vllm",
-          skipSkills: true,
         }),
       ).rejects.toThrow('Auth choice "vllm" requires interactive mode.');
     });
@@ -522,7 +515,6 @@ describe("onboard (non-interactive): provider auth", () => {
         cloudflareAiGatewayAccountId: "cf-account-id",
         cloudflareAiGatewayGatewayId: "cf-gateway-id",
         cloudflareAiGatewayApiKey: "cf-gateway-test-key", // pragma: allowlist secret
-        skipSkills: true,
         ...options,
       });
 
@@ -604,7 +596,6 @@ describe("onboard (non-interactive): provider auth", () => {
         customApiKey: "custom-test-key", // pragma: allowlist secret
         customModelId: "foo-large",
         customCompatibility: "anthropic",
-        skipSkills: true,
       });
 
       const cfg = await readJsonFile<ProviderAuthConfigSnapshot>(configPath);
@@ -626,7 +617,6 @@ describe("onboard (non-interactive): provider auth", () => {
           customBaseUrl: "https://models.custom.local/v1",
           customModelId: "local-large",
           customApiKey: "custom-test-key", // pragma: allowlist secret
-          skipSkills: true,
         });
 
         const cfg = await readJsonFile<ProviderAuthConfigSnapshot>(configPath);
@@ -724,7 +714,6 @@ describe("onboard (non-interactive): provider auth", () => {
             customBaseUrl: "https://models.custom.local/v1",
             customModelId: "local-large",
             customCompatibility: "xmlrpc",
-            skipSkills: true,
           }),
         ).rejects.toThrow('Invalid --custom-compatibility (use "openai" or "anthropic").');
       },
@@ -739,7 +728,6 @@ describe("onboard (non-interactive): provider auth", () => {
           customBaseUrl: "https://models.custom.local/v1",
           customModelId: "local-large",
           customProviderId: "!!!",
-          skipSkills: true,
         }),
       ).rejects.toThrow(
         "Invalid custom provider config: Custom provider ID must include letters, numbers, or hyphens.",
@@ -754,7 +742,6 @@ describe("onboard (non-interactive): provider auth", () => {
         await expect(
           runNonInteractiveOnboardingWithDefaults(runtime, {
             customApiKey: "custom-test-key", // pragma: allowlist secret
-            skipSkills: true,
           }),
         ).rejects.toThrow('Auth choice "custom-api-key" requires a base URL and model ID.');
       },

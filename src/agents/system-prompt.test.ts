@@ -98,8 +98,6 @@ describe("buildAgentSystemPrompt", () => {
       workspaceDir: "/tmp/openclaw",
       promptMode: "minimal",
       ownerNumbers: ["+123"],
-      skillsPrompt:
-        "<available_skills>\n  <skill>\n    <name>demo</name>\n  </skill>\n</available_skills>",
       heartbeatPrompt: "ping",
       toolNames: ["message", "memory_search"],
       docsPath: "/tmp/openclaw/docs",
@@ -108,8 +106,6 @@ describe("buildAgentSystemPrompt", () => {
     });
 
     expect(prompt).not.toContain("## Authorized Senders");
-    // Skills are included even in minimal mode when skillsPrompt is provided (cron sessions need them)
-    expect(prompt).toContain("## Skills");
     expect(prompt).not.toContain("## Memory Recall");
     expect(prompt).not.toContain("## Documentation");
     expect(prompt).not.toContain("## Reply Tags");
@@ -125,24 +121,7 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("Subagent details");
   });
 
-  it("includes skills in minimal prompt mode when skillsPrompt is provided (cron regression)", () => {
-    // Isolated cron sessions use promptMode="minimal" but must still receive skills.
-    const skillsPrompt =
-      "<available_skills>\n  <skill>\n    <name>demo</name>\n  </skill>\n</available_skills>";
-    const prompt = buildAgentSystemPrompt({
-      workspaceDir: "/tmp/openclaw",
-      promptMode: "minimal",
-      skillsPrompt,
-    });
-
-    expect(prompt).toContain("## Skills (mandatory)");
-    expect(prompt).toContain("<available_skills>");
-    expect(prompt).toContain(
-      "When a skill drives external API writes, assume rate limits: prefer fewer larger writes, avoid tight one-item loops, serialize bursts when possible, and respect 429/Retry-After.",
-    );
-  });
-
-  it("omits skills in minimal prompt mode when skillsPrompt is absent", () => {
+  it("omits the obsolete skills section in minimal prompt mode", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
       promptMode: "minimal",
@@ -323,16 +302,11 @@ describe("buildAgentSystemPrompt", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
       toolNames: ["Read", "Exec", "process"],
-      skillsPrompt:
-        "<available_skills>\n  <skill>\n    <name>demo</name>\n  </skill>\n</available_skills>",
       docsPath: "/tmp/openclaw/docs",
     });
 
     expect(prompt).toContain("- Read: Read file contents");
     expect(prompt).toContain("- Exec: Run shell commands");
-    expect(prompt).toContain(
-      "- If exactly one skill clearly applies: read its SKILL.md at <location> with `Read`, then follow it.",
-    );
     expect(prompt).toContain("OpenClaw docs: /tmp/openclaw/docs");
     expect(prompt).toContain(
       "For OpenClaw behavior, commands, config, or architecture: consult local docs first.",
@@ -462,31 +436,7 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).not.toContain("config.schema, config.apply");
   });
 
-  it("includes skills guidance when skills prompt is present", () => {
-    const prompt = buildAgentSystemPrompt({
-      workspaceDir: "/tmp/openclaw",
-      skillsPrompt:
-        "<available_skills>\n  <skill>\n    <name>demo</name>\n  </skill>\n</available_skills>",
-    });
-
-    expect(prompt).toContain("## Skills");
-    expect(prompt).toContain(
-      "- If exactly one skill clearly applies: read its SKILL.md at <location> with `read`, then follow it.",
-    );
-  });
-
-  it("appends available skills when provided", () => {
-    const prompt = buildAgentSystemPrompt({
-      workspaceDir: "/tmp/openclaw",
-      skillsPrompt:
-        "<available_skills>\n  <skill>\n    <name>demo</name>\n  </skill>\n</available_skills>",
-    });
-
-    expect(prompt).toContain("<available_skills>");
-    expect(prompt).toContain("<name>demo</name>");
-  });
-
-  it("omits skills section when no skills prompt is provided", () => {
+  it("omits the obsolete skills section", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
     });

@@ -14,7 +14,8 @@ import {
 } from "../gateway/protocol/client-info.js";
 import { getActivePluginRegistry } from "../plugins/runtime.js";
 
-export const INTERNAL_MESSAGE_CHANNEL = "webchat" as const;
+export const INTERNAL_MESSAGE_CHANNEL = "internal" as const;
+export const LEGACY_INTERNAL_MESSAGE_CHANNEL = "webchat" as const;
 export type InternalMessageChannel = typeof INTERNAL_MESSAGE_CHANNEL;
 
 const MARKDOWN_CAPABLE_CHANNELS = new Set<string>([
@@ -57,7 +58,7 @@ export function normalizeMessageChannel(raw?: string | null): string | undefined
   if (!normalized) {
     return undefined;
   }
-  if (normalized === INTERNAL_MESSAGE_CHANNEL) {
+  if (normalized === INTERNAL_MESSAGE_CHANNEL || normalized === LEGACY_INTERNAL_MESSAGE_CHANNEL) {
     return INTERNAL_MESSAGE_CHANNEL;
   }
   const builtIn = normalizeChatChannelId(normalized);

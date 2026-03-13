@@ -6,7 +6,6 @@ import type {
   AuthChoice,
   GatewayAuthChoice,
   GatewayBind,
-  NodeManagerChoice,
   ResetScope,
   SecretInputMode,
   TailscaleMode,
@@ -49,7 +48,7 @@ const AUTH_CHOICE_HELP = formatAuthChoiceChoicesForCli({
 export function registerOnboardCommand(program: Command) {
   const command = program
     .command("onboard")
-    .description("Interactive wizard to set up the gateway, workspace, and skills")
+    .description("Interactive wizard to set up the gateway and workspace")
     .addHelpText(
       "after",
       () =>
@@ -118,11 +117,9 @@ export function registerOnboardCommand(program: Command) {
     .option("--skip-daemon", "Skip gateway service install")
     .option("--daemon-runtime <runtime>", "Daemon runtime: node|bun")
     .option("--skip-channels", "Skip channel setup")
-    .option("--skip-skills", "Skip skills setup")
     .option("--skip-search", "Skip search provider setup")
     .option("--skip-health", "Skip health check")
     .option("--skip-ui", "Skip post-setup TUI prompts")
-    .option("--node-manager <name>", "Node manager for skills: npm|pnpm|bun")
     .option("--json", "Output JSON summary", false);
 
   command.action(async (opts, commandRuntime) => {
@@ -196,11 +193,9 @@ export function registerOnboardCommand(program: Command) {
           installDaemon,
           daemonRuntime: opts.daemonRuntime as GatewayDaemonRuntime | undefined,
           skipChannels: Boolean(opts.skipChannels),
-          skipSkills: Boolean(opts.skipSkills),
           skipSearch: Boolean(opts.skipSearch),
           skipHealth: Boolean(opts.skipHealth),
           skipUi: Boolean(opts.skipUi),
-          nodeManager: opts.nodeManager as NodeManagerChoice | undefined,
           json: Boolean(opts.json),
         },
         defaultRuntime,

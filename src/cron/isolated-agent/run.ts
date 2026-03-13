@@ -72,7 +72,6 @@ import {
 } from "./helpers.js";
 import { resolveCronAgentSessionKey } from "./session-key.js";
 import { resolveCronSession } from "./session.js";
-import { resolveCronSkillsSnapshot } from "./skills-snapshot.js";
 import { isLikelyInterimCronMessage } from "./subagent-followup.js";
 
 export type RunCronAgentTurnResult = {
@@ -479,23 +478,6 @@ export async function runCronIsolatedAgentTurn(params: {
   }
   commandBody = appendCronDeliveryInstruction({ commandBody, deliveryRequested });
 
-  const existingSkillsSnapshot = cronSession.sessionEntry.skillsSnapshot;
-  const skillsSnapshot = resolveCronSkillsSnapshot({
-    workspaceDir,
-    config: cfgWithAgentDefaults,
-    agentId,
-    existingSnapshot: existingSkillsSnapshot,
-    isFastTestEnv,
-  });
-  if (!isFastTestEnv && skillsSnapshot !== existingSkillsSnapshot) {
-    cronSession.sessionEntry = {
-      ...cronSession.sessionEntry,
-      updatedAt: Date.now(),
-      skillsSnapshot,
-    };
-    await persistSessionEntry();
-  }
-
   // Persist the intended model and systemSent before the run so that
   // sessions_list reflects the cron override even if the run fails or is
   // still in progress (#21057).  Best-effort: a filesystem error here
@@ -609,7 +591,6 @@ export async function runCronIsolatedAgentTurn(params: {
             agentDir,
             workspaceDir,
             config: cfgWithAgentDefaults,
-            skillsSnapshot,
             prompt: promptText,
             lane: resolveNestedAgentLane(params.lane),
             provider: providerOverride,

@@ -12,7 +12,6 @@ import {
   resolveAgentDir,
   resolveEffectiveModelFallbacks,
   resolveSessionAgentId,
-  resolveAgentSkillsFilter,
   resolveAgentWorkspaceDir,
 } from "../agents/agent-scope.js";
 import { ensureAuthProfileStore } from "../agents/auth-profiles.js";
@@ -38,8 +37,6 @@ import {
 } from "../agents/model-selection.js";
 import { prepareSessionManagerForRun } from "../agents/pi-embedded-runner/session-manager-init.js";
 import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
-import { buildWorkspaceSkillSnapshot } from "../agents/skills.js";
-import { getSkillsSnapshotVersion } from "../agents/skills/refresh.js";
 import { normalizeSpawnedRunMetadata } from "../agents/spawned-context.js";
 import { resolveAgentTimeoutMs } from "../agents/timeout.js";
 import { ensureAgentWorkspace } from "../agents/workspace.js";
@@ -80,7 +77,6 @@ import {
   registerAgentRunContext,
 } from "../infra/agent-events.js";
 import { buildOutboundSessionContext } from "../infra/outbound/session-context.js";
-import { getRemoteSkillEligibility } from "../infra/skills-remote.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import { buildEphemeralPromptBlock } from "../sessions/ephemeral-context.js";
@@ -387,7 +383,6 @@ function runAgentAttempt(params: {
   runContext: ReturnType<typeof resolveAgentRunContext>;
   spawnedBy: string | undefined;
   messageChannel: ReturnType<typeof resolveMessageChannel>;
-  skillsSnapshot: ReturnType<typeof buildWorkspaceSkillSnapshot> | undefined;
   resolvedVerboseLevel: VerboseLevel | undefined;
   agentDir: string;
   onAgentEvent: (evt: { stream: string; data?: Record<string, unknown> }) => void;
@@ -527,7 +522,6 @@ function runAgentAttempt(params: {
     sessionFile: params.sessionFile,
     workspaceDir: params.workspaceDir,
     config: params.cfg,
-    skillsSnapshot: params.skillsSnapshot,
     prompt: effectivePrompt,
     images: params.isFallbackRetry ? undefined : params.opts.images,
     clientTools: params.opts.clientTools,
@@ -780,7 +774,6 @@ async function agentCommandInternal(
     sessionKey,
     sessionStore,
     storePath,
-    isNewSession,
     persistedThinking,
     persistedVerbose,
     sessionAgentId,
@@ -964,38 +957,6 @@ async function agentCommandInternal(
         sessionKey,
         verboseLevel: resolvedVerboseLevel,
       });
-    }
-
-    const needsSkillsSnapshot = isNewSession || !sessionEntry?.skillsSnapshot;
-    const skillsSnapshotVersion = getSkillsSnapshotVersion(workspaceDir);
-    const skillFilter = resolveAgentSkillsFilter(cfg, sessionAgentId);
-    const skillsSnapshot = needsSkillsSnapshot
-      ? buildWorkspaceSkillSnapshot(workspaceDir, {
-          config: cfg,
-          eligibility: { remote: getRemoteSkillEligibility() },
-          snapshotVersion: skillsSnapshotVersion,
-          skillFilter,
-        })
-      : sessionEntry?.skillsSnapshot;
-
-    if (skillsSnapshot && sessionStore && sessionKey && needsSkillsSnapshot) {
-      const current = sessionEntry ?? {
-        sessionId,
-        updatedAt: Date.now(),
-      };
-      const next: SessionEntry = {
-        ...current,
-        sessionId,
-        updatedAt: Date.now(),
-        skillsSnapshot,
-      };
-      await persistSessionEntry({
-        sessionStore,
-        sessionKey,
-        storePath,
-        entry: next,
-      });
-      sessionEntry = next;
     }
 
     // Persist explicit /command overrides to the session store when we have a key.
@@ -1221,7 +1182,6 @@ async function agentCommandInternal(
             runContext,
             spawnedBy,
             messageChannel,
-            skillsSnapshot,
             resolvedVerboseLevel,
             agentDir,
             primaryProvider: provider,

@@ -1,6 +1,7 @@
 import { normalizeChatType } from "../../channels/chat-type.js";
 import { resolveSenderLabel } from "../../channels/sender-label.js";
 import { formatZonedTimestamp } from "../../infra/format-time/format-datetime.js";
+import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import type { TemplateContext } from "../templating.js";
 
 function safeTrim(value: unknown): string | undefined {
@@ -35,7 +36,7 @@ function resolveInboundChannel(ctx: TemplateContext): string | undefined {
   let channelValue = safeTrim(ctx.OriginatingChannel) ?? safeTrim(ctx.Surface);
   if (!channelValue) {
     const provider = safeTrim(ctx.Provider);
-    if (provider !== "webchat" && ctx.Surface !== "webchat") {
+    if (provider !== INTERNAL_MESSAGE_CHANNEL && provider !== "webchat") {
       channelValue = provider;
     }
   }
@@ -53,7 +54,7 @@ export function buildInboundMetaSystemPrompt(ctx: TemplateContext): string {
   // They are included in the user-role conversation info block instead.
 
   // Resolve channel identity: prefer explicit channel, then surface, then provider.
-  // For webchat/Hub Chat sessions (when Surface is 'webchat' or undefined with no real channel),
+  // For internal sessions (when Surface is internal or undefined with no real channel),
   // omit the channel field entirely rather than falling back to an unrelated provider.
   const channelValue = resolveInboundChannel(ctx);
 
@@ -87,7 +88,9 @@ export function buildInboundUserContextPrefix(ctx: TemplateContext): string {
   const isDirect = !chatType || chatType === "direct";
   const directChannelValue = resolveInboundChannel(ctx);
   const includeDirectConversationInfo = Boolean(
-    directChannelValue && directChannelValue !== "webchat",
+    directChannelValue &&
+    directChannelValue !== INTERNAL_MESSAGE_CHANNEL &&
+    directChannelValue !== "webchat",
   );
   const shouldIncludeConversationInfo = !isDirect || includeDirectConversationInfo;
 

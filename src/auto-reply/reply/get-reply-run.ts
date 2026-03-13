@@ -19,6 +19,7 @@ import { logVerbose } from "../../globals.js";
 import { clearCommandLane, getQueueSize } from "../../process/command-queue.js";
 import { normalizeMainKey } from "../../routing/session-key.js";
 import { buildEphemeralPromptBlock } from "../../sessions/ephemeral-context.js";
+import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import { isReasoningTagProvider } from "../../utils/provider-utils.js";
 import { hasControlCommand } from "../command-detection.js";
 import { buildInboundMediaNote } from "../media-note.js";
@@ -45,7 +46,7 @@ import { resolveOriginMessageProvider } from "./origin-routing.js";
 import { resolveQueueSettings } from "./queue.js";
 import { routeReply } from "./route-reply.js";
 import { buildBareSessionResetPrompt } from "./session-reset-prompt.js";
-import { drainFormattedSystemEvents, ensureSkillSnapshot } from "./session-updates.js";
+import { drainFormattedSystemEvents, ensureSessionStarted } from "./session-updates.js";
 import { resolveTypingMode } from "./typing-mode.js";
 import { resolveRunTypingPolicy } from "./typing-policy.js";
 import type { TypingController } from "./typing.js";
@@ -76,12 +77,12 @@ function resolveResetSessionNoticeRoute(params: {
 } | null {
   const commandChannel = params.command.channel?.trim().toLowerCase();
   const fallbackChannel =
-    commandChannel && commandChannel !== "webchat"
+    commandChannel && commandChannel !== INTERNAL_MESSAGE_CHANNEL && commandChannel !== "webchat"
       ? (commandChannel as Parameters<typeof routeReply>[0]["channel"])
       : undefined;
   const channel = params.ctx.OriginatingChannel ?? fallbackChannel;
   const to = params.ctx.OriginatingTo ?? params.command.from ?? params.command.to;
-  if (!channel || channel === "webchat" || !to) {
+  if (!channel || channel === INTERNAL_MESSAGE_CHANNEL || channel === "webchat" || !to) {
     return null;
   }
   return { channel, to };
@@ -370,20 +371,17 @@ export async function runPreparedReply(
     : threadStarterBody
       ? `[Thread starter - for context]\n${threadStarterBody}`
       : undefined;
-  const skillResult = await ensureSkillSnapshot({
+  const sessionInit = await ensureSessionStarted({
     sessionEntry,
     sessionStore,
     sessionKey,
     storePath,
     sessionId,
     isFirstTurnInSession,
-    workspaceDir,
     cfg,
-    skillFilter: opts?.skillFilter,
   });
-  sessionEntry = skillResult.sessionEntry ?? sessionEntry;
-  currentSystemSent = skillResult.systemSent;
-  const skillsSnapshot = skillResult.skillsSnapshot;
+  sessionEntry = sessionInit.sessionEntry ?? sessionEntry;
+  currentSystemSent = sessionInit.systemSent;
   const prefixedBody = [threadContextNote, prefixedBodyBase].filter(Boolean).join("\n\n");
   const mediaNote = buildInboundMediaNote(ctx);
   const mediaReplyHint = mediaNote
@@ -528,7 +526,6 @@ export async function runPreparedReply(
       sessionFile,
       workspaceDir,
       config: cfg,
-      skillsSnapshot,
       provider,
       model,
       authProfileId,

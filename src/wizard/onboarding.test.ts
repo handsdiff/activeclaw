@@ -64,7 +64,6 @@ const logConfigUpdated = vi.hoisted(() => vi.fn(() => {}));
 const setupInternalHooks = vi.hoisted(() => vi.fn(async (cfg) => cfg));
 
 const setupChannels = vi.hoisted(() => vi.fn(async (cfg) => cfg));
-const setupSkills = vi.hoisted(() => vi.fn(async (cfg) => cfg));
 const healthCommand = vi.hoisted(() => vi.fn(async () => {}));
 const ensureWorkspaceAndSessions = vi.hoisted(() => vi.fn(async () => {}));
 const writeConfigFile = vi.hoisted(() => vi.fn(async () => {}));
@@ -90,10 +89,6 @@ const probeGatewayReachable = vi.hoisted(() => vi.fn(async () => ({ ok: true }))
 
 vi.mock("../commands/onboard-channels.js", () => ({
   setupChannels,
-}));
-
-vi.mock("../commands/onboard-skills.js", () => ({
-  setupSkills,
 }));
 
 vi.mock("../agents/auth-profiles.js", () => ({
@@ -257,7 +252,6 @@ describe("runOnboardingWizard", () => {
           authChoice: "skip",
           installDaemon: false,
           skipProviders: true,
-          skipSkills: true,
           skipSearch: true,
           skipHealth: true,
           skipUi: true,
@@ -286,7 +280,6 @@ describe("runOnboardingWizard", () => {
         authChoice: "skip",
         installDaemon: false,
         skipProviders: true,
-        skipSkills: true,
         skipSearch: true,
         skipHealth: true,
         skipUi: true,
@@ -297,7 +290,6 @@ describe("runOnboardingWizard", () => {
 
     expect(select).not.toHaveBeenCalled();
     expect(setupChannels).not.toHaveBeenCalled();
-    expect(setupSkills).not.toHaveBeenCalled();
     expect(healthCommand).not.toHaveBeenCalled();
     expect(runTui).not.toHaveBeenCalled();
   });
@@ -331,7 +323,6 @@ describe("runOnboardingWizard", () => {
         workspace: workspaceDir,
         authChoice: "skip",
         skipProviders: true,
-        skipSkills: true,
         skipSearch: true,
         skipHealth: true,
         installDaemon: false,
@@ -372,7 +363,6 @@ describe("runOnboardingWizard", () => {
           authChoice: "skip",
           installDaemon: false,
           skipProviders: true,
-          skipSkills: true,
           skipSearch: true,
           skipHealth: true,
           skipUi: true,
@@ -438,7 +428,6 @@ describe("runOnboardingWizard", () => {
           authChoice: "skip",
           installDaemon: false,
           skipProviders: true,
-          skipSkills: true,
           skipSearch: true,
           skipHealth: true,
           skipUi: true,
@@ -475,7 +464,6 @@ describe("runOnboardingWizard", () => {
         authChoice: "skip",
         installDaemon: false,
         skipProviders: true,
-        skipSkills: true,
         skipSearch: true,
         skipHealth: true,
         skipUi: true,

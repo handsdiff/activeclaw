@@ -2,6 +2,7 @@ import path from "node:path";
 import type { AnyAgentTool } from "../agents/tools/common.js";
 import type { ChannelDock } from "../channels/dock.js";
 import type { ChannelPlugin } from "../channels/plugins/types.js";
+import { isSupportedChannelId } from "../channels/supported.js";
 import { registerContextEngine } from "../context-engine/registry.js";
 import type {
   GatewayRequestHandler,
@@ -415,6 +416,15 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
         pluginId: record.id,
         source: record.source,
         message: "channel registration missing id",
+      });
+      return;
+    }
+    if (!isSupportedChannelId(id)) {
+      pushDiagnostic({
+        level: "warn",
+        pluginId: record.id,
+        source: record.source,
+        message: `channel disabled by activeclaw channel policy: ${id}`,
       });
       return;
     }

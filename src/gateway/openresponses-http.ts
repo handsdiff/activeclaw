@@ -29,6 +29,7 @@ import {
   type InputImageSource,
 } from "../media/input-files.js";
 import { defaultRuntime } from "../runtime.js";
+import { INTERNAL_MESSAGE_CHANNEL } from "../utils/message-channel.js";
 import { resolveAssistantStreamDeltaText } from "./agent-event-assistant-text.js";
 import type { AuthRateLimiter } from "./auth-rate-limit.js";
 import type { ResolvedGatewayAuth } from "./auth.js";
@@ -431,7 +432,7 @@ export async function handleOpenResponsesHttpRequest(
     model,
     user,
     sessionPrefix: "openresponses",
-    defaultMessageChannel: "webchat",
+    defaultMessageChannel: INTERNAL_MESSAGE_CHANNEL,
     useMessageChannelHeader: false,
   });
 

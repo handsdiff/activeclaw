@@ -26,7 +26,7 @@ export function resolveTypingMode({
     isHeartbeat ||
     typingPolicy === "heartbeat" ||
     typingPolicy === "system_event" ||
-    typingPolicy === "internal_webchat" ||
+    typingPolicy === "internal" ||
     suppressTyping
   ) {
     return "never";

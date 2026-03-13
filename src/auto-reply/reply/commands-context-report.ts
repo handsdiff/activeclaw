@@ -52,7 +52,7 @@ async function resolveContextReport(
 
   const bootstrapMaxChars = resolveBootstrapMaxChars(params.cfg);
   const bootstrapTotalMaxChars = resolveBootstrapTotalMaxChars(params.cfg);
-  const { systemPrompt, tools, skillsPrompt, bootstrapFiles, injectedFiles, sandboxRuntime } =
+  const { systemPrompt, tools, bootstrapFiles, injectedFiles, sandboxRuntime } =
     await resolveCommandsSystemPromptBundle(params);
 
   return buildSystemPromptReport({
@@ -69,7 +69,7 @@ async function resolveContextReport(
     systemPrompt,
     bootstrapFiles,
     injectedFiles,
-    skillsPrompt,
+    skillsPrompt: "",
     tools,
   });
 }
@@ -87,7 +87,7 @@ export async function buildContextReply(params: HandleCommandsParams): Promise<R
         "",
         "Try:",
         "- /context list   (short breakdown)",
-        "- /context detail (per-file + per-tool + per-skill + system prompt size)",
+        "- /context detail (per-file + per-tool + system prompt size)",
         "- /context json   (same, machine-readable)",
         "",
         "Inline shortcut = a command token inside a normal message (e.g. “hey /status”). It runs immediately (allowlisted senders only) and is stripped before the model sees the remaining text.",
