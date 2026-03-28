@@ -8,10 +8,10 @@
     "google-auth-library": "^10.6.1"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.3.2"
+    "activeclaw": ">=2026.3.2"
   },
   "peerDependenciesMeta": {
-    "openclaw": {
+    "activeclaw": {
       "optional": true
     }
   },
