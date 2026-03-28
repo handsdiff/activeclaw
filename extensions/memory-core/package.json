@@ -1,14 +1,14 @@
 {
-  "name": "@openclaw/memory-core",
+  "name": "@activeclaw/memory-core",
   "version": "2026.3.2",
   "private": true,
-  "description": "OpenClaw core memory search plugin",
+  "description": "ActiveClaw core memory search plugin",
   "type": "module",
   "peerDependencies": {
-    "openclaw": ">=2026.3.2"
+    "activeclaw": ">=2026.3.2"
   },
   "peerDependenciesMeta": {
-    "openclaw": {
+    "activeclaw": {
       "optional": true
     }
   },
