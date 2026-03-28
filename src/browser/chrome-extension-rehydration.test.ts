@@ -29,18 +29,38 @@ type TabState = {
 };
 
 // ── Mock Chrome APIs ────────────────────────────────────────────────────
-function createMockChrome(opts: {
+
+/**
+ * Per-tab configuration for multi-tab scenarios.
+ * When `perTab` is provided, each tab can have independent debugger state.
+ * Falls back to top-level `tabExists`/`debuggerAttached` for single-tab tests.
+ */
+type MockChromeOpts = {
   tabExists: boolean;
   debuggerAttached: boolean;
   attachSucceeds?: boolean;
-}) {
+  perTab?: Map<number, { exists: boolean; debuggerAttached: boolean; attachSucceeds?: boolean }>;
+};
+
+function createMockChrome(opts: MockChromeOpts) {
   const attachCalls: number[] = [];
   const detachCalls: number[] = [];
+
+  function getTabOpts(tabId: number) {
+    return (
+      opts.perTab?.get(tabId) ?? {
+        exists: opts.tabExists,
+        debuggerAttached: opts.debuggerAttached,
+        attachSucceeds: opts.attachSucceeds,
+      }
+    );
+  }
 
   return {
     tabs: {
       get: vi.fn(async (tabId: number) => {
-        if (!opts.tabExists) {
+        const t = getTabOpts(tabId);
+        if (!t.exists) {
           throw new Error(`No tab with id: ${tabId}`);
         }
         return { id: tabId, url: "https://example.com", status: "complete" };
@@ -49,7 +69,8 @@ function createMockChrome(opts: {
     debugger: {
       sendCommand: vi.fn(
         async (_debuggee: { tabId: number }, method: string, _params?: unknown) => {
-          if (!opts.debuggerAttached) {
+          const t = getTabOpts(_debuggee.tabId);
+          if (!t.debuggerAttached) {
             throw new Error("Debugger is not attached to the tab with id: " + _debuggee.tabId);
           }
           if (method === "Runtime.evaluate") {
@@ -59,15 +80,25 @@ function createMockChrome(opts: {
         },
       ),
       attach: vi.fn(async (debuggee: { tabId: number }, _version: string) => {
-        if (opts.attachSucceeds === false) {
+        const t = getTabOpts(debuggee.tabId);
+        if (t.attachSucceeds === false) {
           throw new Error("Cannot attach to this target");
         }
         attachCalls.push(debuggee.tabId);
-        opts.debuggerAttached = true;
+        // Update per-tab state if available, otherwise fall back to shared
+        if (opts.perTab?.has(debuggee.tabId)) {
+          opts.perTab.get(debuggee.tabId)!.debuggerAttached = true;
+        } else {
+          opts.debuggerAttached = true;
+        }
       }),
       detach: vi.fn(async (debuggee: { tabId: number }) => {
         detachCalls.push(debuggee.tabId);
-        opts.debuggerAttached = false;
+        if (opts.perTab?.has(debuggee.tabId)) {
+          opts.perTab.get(debuggee.tabId)!.debuggerAttached = false;
+        } else {
+          opts.debuggerAttached = false;
+        }
       }),
     },
     storage: {
@@ -252,16 +283,24 @@ describe("chrome extension MV3 rehydration — behavioral tests", () => {
     });
 
     it("handles multiple tabs — keeps attached, deletes detached", async () => {
-      // Tab 42: attached, Tab 99: detached
+      // Tab 42: attached, Tab 99: detached — per-tab debugger state
       const entries: PersistedTab[] = [
         { tabId: 42, sessionId: "cb-tab-42", targetId: "t-42", attachOrder: 1 },
         { tabId: 99, sessionId: "cb-tab-99", targetId: "t-99", attachOrder: 2 },
       ];
-      // We need per-tab behavior, so we test with a single chrome mock
-      // where debugger IS attached (both survive)
-      const chrome = createMockChrome({ tabExists: true, debuggerAttached: true });
+      const chrome = createMockChrome({
+        tabExists: true,
+        debuggerAttached: false,
+        perTab: new Map([
+          [42, { exists: true, debuggerAttached: true }],
+          [99, { exists: true, debuggerAttached: false }],
+        ]),
+      });
       const { tabs } = await currentRehydrateState(chrome, entries);
-      expect(tabs.size).toBe(2);
+      // Tab 42 survives (debugger attached), tab 99 deleted (debugger detached)
+      expect(tabs.has(42)).toBe(true);
+      expect(tabs.has(99)).toBe(false);
+      expect(tabs.size).toBe(1);
     });
   });
 
@@ -306,6 +345,81 @@ describe("chrome extension MV3 rehydration — behavioral tests", () => {
       const { tabs, tabBySession } = await desiredRehydrateState(chrome, [persistedTab]);
       expect(tabs.has(42)).toBe(false);
       expect(tabBySession.has("cb-tab-42")).toBe(false);
+    });
+
+    it("re-attaches only detached tabs in multi-tab scenario", async () => {
+      // Tab 42: attached (should keep without re-attach)
+      // Tab 99: detached (should re-attach)
+      const entries: PersistedTab[] = [
+        { tabId: 42, sessionId: "cb-tab-42", targetId: "t-42", attachOrder: 1 },
+        { tabId: 99, sessionId: "cb-tab-99", targetId: "t-99", attachOrder: 2 },
+      ];
+      const chrome = createMockChrome({
+        tabExists: true,
+        debuggerAttached: false,
+        perTab: new Map([
+          [42, { exists: true, debuggerAttached: true }],
+          [99, { exists: true, debuggerAttached: false, attachSucceeds: true }],
+        ]),
+      });
+      const { tabs } = await desiredRehydrateState(chrome, entries);
+      // Both should survive
+      expect(tabs.has(42)).toBe(true);
+      expect(tabs.has(99)).toBe(true);
+      expect(tabs.size).toBe(2);
+      // Only tab 99 needed re-attach
+      expect(chrome.attachCalls).toEqual([99]);
+    });
+
+    it("handles mixed outcomes: one re-attaches, one fails", async () => {
+      const entries: PersistedTab[] = [
+        { tabId: 42, sessionId: "cb-tab-42", targetId: "t-42", attachOrder: 1 },
+        { tabId: 99, sessionId: "cb-tab-99", targetId: "t-99", attachOrder: 2 },
+      ];
+      const chrome = createMockChrome({
+        tabExists: true,
+        debuggerAttached: false,
+        perTab: new Map([
+          [42, { exists: true, debuggerAttached: false, attachSucceeds: true }],
+          [99, { exists: true, debuggerAttached: false, attachSucceeds: false }],
+        ]),
+      });
+      const { tabs } = await desiredRehydrateState(chrome, entries);
+      // Tab 42 re-attaches successfully, tab 99 fails
+      expect(tabs.has(42)).toBe(true);
+      expect(tabs.has(99)).toBe(false);
+      expect(tabs.size).toBe(1);
+      expect(chrome.attachCalls).toContain(42);
+    });
+  });
+
+  describe("regression: ordering-dependent shared-state bug (quadricep audit)", () => {
+    it("per-tab debugger state prevents cross-tab contamination", async () => {
+      // This test catches the bug quadricep identified: if debuggerAttached is
+      // a single shared boolean, attaching tab A sets it true globally, causing
+      // tab B's validation to pass even though B's debugger was never re-attached.
+      const entries: PersistedTab[] = [
+        { tabId: 42, sessionId: "cb-tab-42", targetId: "t-42", attachOrder: 1 },
+        { tabId: 99, sessionId: "cb-tab-99", targetId: "t-99", attachOrder: 2 },
+      ];
+      // Both tabs have detached debuggers, but only tab 42 can re-attach
+      const chrome = createMockChrome({
+        tabExists: true,
+        debuggerAttached: false,
+        perTab: new Map([
+          [42, { exists: true, debuggerAttached: false, attachSucceeds: true }],
+          [99, { exists: true, debuggerAttached: false, attachSucceeds: false }],
+        ]),
+      });
+      const { tabs } = await desiredRehydrateState(chrome, entries);
+      // Tab 42 should re-attach and survive
+      expect(tabs.has(42)).toBe(true);
+      // Tab 99 should NOT survive — its re-attach fails independently
+      // With the old shared boolean, tab 99 would pass because tab 42's
+      // attach set the global flag to true
+      expect(tabs.has(99)).toBe(false);
+      // Verify attach was attempted for both
+      expect(chrome.attachCalls).toContain(42);
     });
   });
 
