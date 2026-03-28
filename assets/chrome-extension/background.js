@@ -148,11 +148,43 @@ async function rehydrateState() {
       tabBySession.set(entry.sessionId, entry.tabId)
       setBadge(entry.tabId, 'on')
     }
-    // Retry once so transient busy/navigation states do not permanently drop
-    // a still-attached tab after a service worker restart.
+    // Phase 2: validate each tab. After an MV3 service worker restart, the
+    // debugger session is dropped by Chrome even though the tab still exists.
+    // Instead of deleting tabs that fail validation, attempt to re-attach the
+    // debugger. Only delete if the tab itself is gone or re-attach fails.
     for (const entry of entries) {
       const valid = await validateAttachedTab(entry.tabId)
       if (!valid) {
+        // Tab validation failed — debugger likely dropped by MV3 restart.
+        // Check if the tab still exists before attempting re-attach.
+        let tabExists = false
+        try {
+          await chrome.tabs.get(entry.tabId)
+          tabExists = true
+        } catch {
+          tabExists = false
+        }
+
+        if (tabExists) {
+          // Tab exists but debugger is detached — re-attach instead of delete.
+          try {
+            const debuggee = { tabId: entry.tabId }
+            await chrome.debugger.attach(debuggee, '1.3')
+            await chrome.debugger.sendCommand(debuggee, 'Page.enable').catch(() => {})
+
+            // Verify re-attach succeeded
+            const reValid = await validateAttachedTab(entry.tabId)
+            if (reValid) {
+              // Re-attach succeeded — keep the persisted state, update badge
+              setBadge(entry.tabId, 'on')
+              continue
+            }
+          } catch {
+            // Re-attach failed (tab may be in a state that doesn't allow debugging)
+          }
+        }
+
+        // Tab is gone or re-attach failed — clean up
         tabs.delete(entry.tabId)
         tabBySession.delete(entry.sessionId)
         setBadge(entry.tabId, 'off')
