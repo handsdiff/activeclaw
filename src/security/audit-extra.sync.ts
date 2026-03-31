@@ -12,7 +12,6 @@ import { isDangerousNetworkMode, normalizeNetworkMode } from "../agents/sandbox/
 import type { SandboxToolPolicy } from "../agents/sandbox/types.js";
 import { getBlockedBindReason } from "../agents/sandbox/validate-sandbox-security.js";
 import { resolveToolProfilePolicy } from "../agents/tool-policy.js";
-import { resolveBrowserConfig } from "../browser/config.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import type { OpenClawConfig } from "../config/config.js";
 import {
@@ -247,14 +246,6 @@ function isWebFetchEnabled(cfg: OpenClawConfig): boolean {
   return true;
 }
 
-function isBrowserEnabled(cfg: OpenClawConfig): boolean {
-  try {
-    return resolveBrowserConfig(cfg.browser, cfg).enabled;
-  } catch {
-    return true;
-  }
-}
-
 function listGroupPolicyOpen(cfg: OpenClawConfig): string[] {
   const out: string[] = [];
   const channels = cfg.channels as Record<string, unknown> | undefined;
@@ -425,7 +416,6 @@ export function collectAttackSurfaceSummaryFindings(cfg: OpenClawConfig): Securi
   const elevated = cfg.tools?.elevated?.enabled !== false;
   const webhooksEnabled = cfg.hooks?.enabled === true;
   const internalHooksEnabled = cfg.hooks?.internal?.enabled === true;
-  const browserEnabled = cfg.browser?.enabled ?? true;
 
   const detail =
     `groups: open=${group.open}, allowlist=${group.allowlist}` +
@@ -435,8 +425,6 @@ export function collectAttackSurfaceSummaryFindings(cfg: OpenClawConfig): Securi
     `hooks.webhooks: ${webhooksEnabled ? "enabled" : "disabled"}` +
     `\n` +
     `hooks.internal: ${internalHooksEnabled ? "enabled" : "disabled"}` +
-    `\n` +
-    `browser control: ${browserEnabled ? "enabled" : "disabled"}` +
     `\n` +
     "trust model: personal assistant (one trusted operator boundary), not hostile multi-tenant on one shared gateway";
 
@@ -820,45 +808,6 @@ export function collectSandboxDangerousConfigFindings(cfg: OpenClawConfig): Secu
     }
   }
 
-  const browserExposurePaths: string[] = [];
-  const defaultBrowser = resolveSandboxConfigForAgent(cfg).browser;
-  if (
-    defaultBrowser.enabled &&
-    defaultBrowser.network.trim().toLowerCase() === "bridge" &&
-    !defaultBrowser.cdpSourceRange?.trim()
-  ) {
-    browserExposurePaths.push("agents.defaults.sandbox.browser");
-  }
-  for (const entry of agents) {
-    if (!entry || typeof entry !== "object" || typeof entry.id !== "string") {
-      continue;
-    }
-    const browser = resolveSandboxConfigForAgent(cfg, entry.id).browser;
-    if (!browser.enabled) {
-      continue;
-    }
-    if (browser.network.trim().toLowerCase() !== "bridge") {
-      continue;
-    }
-    if (browser.cdpSourceRange?.trim()) {
-      continue;
-    }
-    browserExposurePaths.push(`agents.list.${entry.id}.sandbox.browser`);
-  }
-  if (browserExposurePaths.length > 0) {
-    findings.push({
-      checkId: "sandbox.browser_cdp_bridge_unrestricted",
-      severity: "warn",
-      title: "Sandbox browser CDP may be reachable by peer containers",
-      detail:
-        "These sandbox browser configs use Docker bridge networking with no CDP source restriction:\n" +
-        browserExposurePaths.map((entry) => `- ${entry}`).join("\n"),
-      remediation:
-        "Set sandbox.browser.network to a dedicated bridge network (recommended default: openclaw-sandbox-browser), " +
-        "or set sandbox.browser.cdpSourceRange (for example 172.21.0.1/32) to restrict container-edge CDP ingress.",
-    });
-  }
-
   return findings;
 }
 
@@ -1046,11 +995,6 @@ export function collectSmallModelRiskFindings(params: {
         exposed.push("web_fetch");
       }
     }
-    if (isBrowserEnabled(params.cfg)) {
-      if (isToolAllowedByPolicies("browser", policies)) {
-        exposed.push("browser");
-      }
-    }
     for (const tool of exposed) {
       exposureSet.add(tool);
     }
@@ -1070,7 +1014,7 @@ export function collectSmallModelRiskFindings(params: {
   const exposureDetail =
     exposureList.length > 0
       ? `Uncontrolled input tools allowed: ${exposureList.join(", ")}.`
-      : "No web/browser tools detected for these models.";
+      : "No web tools detected for these models.";
 
   findings.push({
     checkId: "models.small_params",
@@ -1084,7 +1028,7 @@ export function collectSmallModelRiskFindings(params: {
       `\n` +
       "Small models are not recommended for untrusted inputs.",
     remediation:
-      'If you must use small models, enable sandboxing for all sessions (agents.defaults.sandbox.mode="all") and disable web_search/web_fetch/browser (tools.deny=["group:web","browser"]).',
+      'If you must use small models, enable sandboxing for all sessions (agents.defaults.sandbox.mode="all") and disable web_search/web_fetch (tools.deny=["group:web"]).',
   });
 
   return findings;

@@ -81,7 +81,6 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "tts.setProvider",
     "chat.send",
     "chat.abort",
-    "browser.request",
   ],
   [ADMIN_SCOPE]: [
     "channels.logout",

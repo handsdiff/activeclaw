@@ -2,7 +2,7 @@
  * Display utilities for sandbox CLI
  */
 
-import type { SandboxBrowserInfo, SandboxContainerInfo } from "../agents/sandbox.js";
+import type { SandboxContainerInfo } from "../agents/sandbox.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import { formatDurationCompact } from "../infra/format-time/format-duration.ts";
 import type { RuntimeEnv } from "../runtime.js";
@@ -50,44 +50,10 @@ export function displayContainers(containers: SandboxContainerInfo[], runtime: R
   );
 }
 
-export function displayBrowsers(browsers: SandboxBrowserInfo[], runtime: RuntimeEnv): void {
-  displayItems(
-    browsers,
-    {
-      emptyMessage: "No sandbox browser containers found.",
-      title: "🌐 Sandbox Browser Containers:",
-      renderItem: (browser, rt) => {
-        rt.log(`  ${browser.containerName}`);
-        rt.log(`    Status:  ${formatStatus(browser.running)}`);
-        rt.log(`    Image:   ${browser.image} ${formatImageMatch(browser.imageMatch)}`);
-        rt.log(`    CDP:     ${browser.cdpPort}`);
-        if (browser.noVncPort) {
-          rt.log(`    noVNC:   ${browser.noVncPort}`);
-        }
-        rt.log(
-          `    Age:     ${formatDurationCompact(Date.now() - browser.createdAtMs, { spaced: true }) ?? "0s"}`,
-        );
-        rt.log(
-          `    Idle:    ${formatDurationCompact(Date.now() - browser.lastUsedAtMs, { spaced: true }) ?? "0s"}`,
-        );
-        rt.log(`    Session: ${browser.sessionKey}`);
-        rt.log("");
-      },
-    },
-    runtime,
-  );
-}
-
-export function displaySummary(
-  containers: SandboxContainerInfo[],
-  browsers: SandboxBrowserInfo[],
-  runtime: RuntimeEnv,
-): void {
-  const totalCount = containers.length + browsers.length;
-  const runningCount =
-    containers.filter((c) => c.running).length + browsers.filter((b) => b.running).length;
-  const mismatchCount =
-    containers.filter((c) => !c.imageMatch).length + browsers.filter((b) => !b.imageMatch).length;
+export function displaySummary(containers: SandboxContainerInfo[], runtime: RuntimeEnv): void {
+  const totalCount = containers.length;
+  const runningCount = containers.filter((container) => container.running).length;
+  const mismatchCount = containers.filter((container) => !container.imageMatch).length;
 
   runtime.log(`Total: ${totalCount} (${runningCount} running)`);
 
@@ -101,7 +67,6 @@ export function displaySummary(
 
 export function displayRecreatePreview(
   containers: SandboxContainerInfo[],
-  browsers: SandboxBrowserInfo[],
   runtime: RuntimeEnv,
 ): void {
   runtime.log("\nContainers to be recreated:\n");
@@ -113,15 +78,7 @@ export function displayRecreatePreview(
     }
   }
 
-  if (browsers.length > 0) {
-    runtime.log("\n🌐 Browser Containers:");
-    for (const browser of browsers) {
-      runtime.log(`  - ${browser.containerName} (${formatSimpleStatus(browser.running)})`);
-    }
-  }
-
-  const total = containers.length + browsers.length;
-  runtime.log(`\nTotal: ${total} container(s)`);
+  runtime.log(`\nTotal: ${containers.length} container(s)`);
 }
 
 export function displayRecreateResult(

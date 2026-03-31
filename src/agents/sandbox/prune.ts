@@ -1,15 +1,6 @@
-import { stopBrowserBridgeServer } from "../../browser/bridge-server.js";
 import { defaultRuntime } from "../../runtime.js";
-import { BROWSER_BRIDGES } from "./browser-bridges.js";
 import { dockerContainerState, execDocker } from "./docker.js";
-import {
-  readBrowserRegistry,
-  readRegistry,
-  removeBrowserRegistryEntry,
-  removeRegistryEntry,
-  type SandboxBrowserRegistryEntry,
-  type SandboxRegistryEntry,
-} from "./registry.js";
+import { readRegistry, removeRegistryEntry, type SandboxRegistryEntry } from "./registry.js";
 import type { SandboxConfig } from "./types.js";
 
 let lastPruneAtMs = 0;
@@ -69,21 +60,6 @@ async function pruneSandboxContainers(cfg: SandboxConfig) {
   });
 }
 
-async function pruneSandboxBrowsers(cfg: SandboxConfig) {
-  await pruneSandboxRegistryEntries<SandboxBrowserRegistryEntry>({
-    cfg,
-    read: readBrowserRegistry,
-    remove: removeBrowserRegistryEntry,
-    onRemoved: async (entry) => {
-      const bridge = BROWSER_BRIDGES.get(entry.sessionKey);
-      if (bridge?.containerName === entry.containerName) {
-        await stopBrowserBridgeServer(bridge.bridge.server).catch(() => undefined);
-        BROWSER_BRIDGES.delete(entry.sessionKey);
-      }
-    },
-  });
-}
-
 export async function maybePruneSandboxes(cfg: SandboxConfig) {
   const now = Date.now();
   if (now - lastPruneAtMs < 5 * 60 * 1000) {
@@ -92,7 +68,6 @@ export async function maybePruneSandboxes(cfg: SandboxConfig) {
   lastPruneAtMs = now;
   try {
     await pruneSandboxContainers(cfg);
-    await pruneSandboxBrowsers(cfg);
   } catch (error) {
     const message =
       error instanceof Error

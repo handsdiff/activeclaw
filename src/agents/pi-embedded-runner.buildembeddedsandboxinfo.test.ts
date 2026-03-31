@@ -50,9 +50,6 @@ describe("buildEmbeddedSandboxInfo", () => {
       containerWorkspaceDir: "/workspace",
       workspaceAccess: "none",
       agentWorkspaceMount: undefined,
-      browserBridgeUrl: "http://localhost:9222",
-      browserNoVncUrl: "http://localhost:6080",
-      hostBrowserAllowed: true,
     });
   });
 
@@ -74,7 +71,6 @@ describe("buildEmbeddedSandboxInfo", () => {
       containerWorkspaceDir: "/workspace",
       workspaceAccess: "none",
       agentWorkspaceMount: undefined,
-      hostBrowserAllowed: false,
       elevated: { allowed: true, defaultLevel: "on" },
     });
   });

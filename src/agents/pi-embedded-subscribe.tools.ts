@@ -135,7 +135,6 @@ export function extractToolResultText(result: unknown): string | undefined {
 const TRUSTED_TOOL_RESULT_MEDIA = new Set([
   "agents_list",
   "apply_patch",
-  "browser",
   "canvas",
   "cron",
   "edit",

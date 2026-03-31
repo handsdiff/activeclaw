@@ -1,15 +1,11 @@
 import { confirm as clackConfirm } from "@clack/prompts";
 import {
-  listSandboxBrowsers,
   listSandboxContainers,
-  removeSandboxBrowserContainer,
   removeSandboxContainer,
-  type SandboxBrowserInfo,
   type SandboxContainerInfo,
 } from "../agents/sandbox.js";
 import type { RuntimeEnv } from "../runtime.js";
 import {
-  displayBrowsers,
   displayContainers,
   displayRecreatePreview,
   displayRecreateResult,
@@ -19,7 +15,6 @@ import {
 // --- Types ---
 
 type SandboxListOptions = {
-  browser: boolean;
   json: boolean;
 };
 
@@ -27,16 +22,10 @@ type SandboxRecreateOptions = {
   all: boolean;
   session?: string;
   agent?: string;
-  browser: boolean;
   force: boolean;
 };
 
-type ContainerItem = SandboxContainerInfo | SandboxBrowserInfo;
-
-type FilteredContainers = {
-  containers: SandboxContainerInfo[];
-  browsers: SandboxBrowserInfo[];
-};
+type FilteredContainers = SandboxContainerInfo[];
 
 // --- List Command ---
 
@@ -44,21 +33,15 @@ export async function sandboxListCommand(
   opts: SandboxListOptions,
   runtime: RuntimeEnv,
 ): Promise<void> {
-  const containers = opts.browser ? [] : await listSandboxContainers().catch(() => []);
-  const browsers = opts.browser ? await listSandboxBrowsers().catch(() => []) : [];
+  const containers = await listSandboxContainers().catch(() => []);
 
   if (opts.json) {
-    runtime.log(JSON.stringify({ containers, browsers }, null, 2));
+    runtime.log(JSON.stringify({ containers }, null, 2));
     return;
   }
 
-  if (opts.browser) {
-    displayBrowsers(browsers, runtime);
-  } else {
-    displayContainers(containers, runtime);
-  }
-
-  displaySummary(containers, browsers, runtime);
+  displayContainers(containers, runtime);
+  displaySummary(containers, runtime);
 }
 
 // --- Recreate Command ---
@@ -73,12 +56,12 @@ export async function sandboxRecreateCommand(
 
   const filtered = await fetchAndFilterContainers(opts);
 
-  if (filtered.containers.length + filtered.browsers.length === 0) {
+  if (filtered.length === 0) {
     runtime.log("No containers found matching the criteria.");
     return;
   }
 
-  displayRecreatePreview(filtered.containers, filtered.browsers, runtime);
+  displayRecreatePreview(filtered, runtime);
 
   if (!opts.force && !(await confirmRecreate())) {
     runtime.log("Cancelled.");
@@ -116,26 +99,22 @@ function validateRecreateOptions(opts: SandboxRecreateOptions, runtime: RuntimeE
 
 async function fetchAndFilterContainers(opts: SandboxRecreateOptions): Promise<FilteredContainers> {
   const allContainers = await listSandboxContainers().catch(() => []);
-  const allBrowsers = await listSandboxBrowsers().catch(() => []);
 
-  let containers = opts.browser ? [] : allContainers;
-  let browsers = opts.browser ? allBrowsers : [];
+  let containers = allContainers;
 
   if (opts.session) {
     containers = containers.filter((c) => c.sessionKey === opts.session);
-    browsers = browsers.filter((b) => b.sessionKey === opts.session);
   } else if (opts.agent) {
     const matchesAgent = createAgentMatcher(opts.agent);
     containers = containers.filter(matchesAgent);
-    browsers = browsers.filter(matchesAgent);
   }
 
-  return { containers, browsers };
+  return containers;
 }
 
 function createAgentMatcher(agentId: string) {
   const agentPrefix = `agent:${agentId}`;
-  return (item: ContainerItem) =>
+  return (item: SandboxContainerInfo) =>
     item.sessionKey === agentPrefix || item.sessionKey.startsWith(`${agentPrefix}:`);
 }
 
@@ -159,21 +138,8 @@ async function removeContainers(
   let successCount = 0;
   let failCount = 0;
 
-  for (const container of filtered.containers) {
+  for (const container of filtered) {
     const result = await removeContainer(container.containerName, removeSandboxContainer, runtime);
-    if (result.success) {
-      successCount++;
-    } else {
-      failCount++;
-    }
-  }
-
-  for (const browser of filtered.browsers) {
-    const result = await removeContainer(
-      browser.containerName,
-      removeSandboxBrowserContainer,
-      runtime,
-    );
     if (result.success) {
       successCount++;
     } else {

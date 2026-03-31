@@ -15,7 +15,6 @@ type CommandOptions = Record<string, unknown>;
 const SANDBOX_EXAMPLES = {
   main: [
     ["openclaw sandbox list", "List all sandbox containers."],
-    ["openclaw sandbox list --browser", "List only browser containers."],
     ["openclaw sandbox recreate --all", "Recreate all containers."],
     ["openclaw sandbox recreate --session main", "Recreate a specific session."],
     ["openclaw sandbox recreate --agent mybot", "Recreate agent containers."],
@@ -23,14 +22,12 @@ const SANDBOX_EXAMPLES = {
   ],
   list: [
     ["openclaw sandbox list", "List all sandbox containers."],
-    ["openclaw sandbox list --browser", "List only browser containers."],
     ["openclaw sandbox list --json", "JSON output."],
   ],
   recreate: [
     ["openclaw sandbox recreate --all", "Recreate all containers."],
     ["openclaw sandbox recreate --session main", "Recreate a specific session."],
     ["openclaw sandbox recreate --agent mybot", "Recreate a specific agent (includes sub-agents)."],
-    ["openclaw sandbox recreate --browser --all", "Recreate only browser containers."],
     ["openclaw sandbox recreate --all --force", "Skip confirmation."],
   ],
   explain: [
@@ -79,7 +76,6 @@ export function registerSandboxCli(program: Command) {
     .command("list")
     .description("List sandbox containers and their status")
     .option("--json", "Output result as JSON", false)
-    .option("--browser", "List browser containers only", false)
     .addHelpText(
       "after",
       () =>
@@ -95,7 +91,6 @@ export function registerSandboxCli(program: Command) {
       createRunner((opts) =>
         sandboxListCommand(
           {
-            browser: Boolean(opts.browser),
             json: Boolean(opts.json),
           },
           defaultRuntime,
@@ -111,7 +106,6 @@ export function registerSandboxCli(program: Command) {
     .option("--all", "Recreate all sandbox containers", false)
     .option("--session <key>", "Recreate container for specific session")
     .option("--agent <id>", "Recreate containers for specific agent")
-    .option("--browser", "Only recreate browser containers", false)
     .option("--force", "Skip confirmation prompt", false)
     .addHelpText(
       "after",
@@ -128,9 +122,7 @@ export function registerSandboxCli(program: Command) {
           "  --session      Remove container for specific session key",
         )}\n${theme.muted(
           "  --agent        Remove containers for agent (includes agent:id:* variants)",
-        )}\n\n${theme.heading("Modifiers:")}\n${theme.muted(
-          "  --browser      Only affect browser containers (not regular sandbox)",
-        )}\n${theme.muted("  --force        Skip confirmation prompt")}`,
+        )}\n\n${theme.heading("Modifiers:")}\n${theme.muted("  --force        Skip confirmation prompt")}`,
     )
     .action(
       createRunner((opts) =>
@@ -139,7 +131,6 @@ export function registerSandboxCli(program: Command) {
             all: Boolean(opts.all),
             session: opts.session as string | undefined,
             agent: opts.agent as string | undefined,
-            browser: Boolean(opts.browser),
             force: Boolean(opts.force),
           },
           defaultRuntime,

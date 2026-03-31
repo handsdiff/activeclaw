@@ -130,7 +130,7 @@ export function resolveSandboxBrowserConfig(params: {
   // Treat `binds: []` as an explicit override, so it can disable `docker.binds` for the browser container.
   const bindsConfigured = globalBrowser?.binds !== undefined || agentBrowser?.binds !== undefined;
   return {
-    enabled: agentBrowser?.enabled ?? globalBrowser?.enabled ?? false,
+    enabled: false,
     image: agentBrowser?.image ?? globalBrowser?.image ?? DEFAULT_SANDBOX_BROWSER_IMAGE,
     containerPrefix:
       agentBrowser?.containerPrefix ??
@@ -143,9 +143,9 @@ export function resolveSandboxBrowserConfig(params: {
     noVncPort:
       agentBrowser?.noVncPort ?? globalBrowser?.noVncPort ?? DEFAULT_SANDBOX_BROWSER_NOVNC_PORT,
     headless: agentBrowser?.headless ?? globalBrowser?.headless ?? false,
-    enableNoVnc: agentBrowser?.enableNoVnc ?? globalBrowser?.enableNoVnc ?? true,
-    allowHostControl: agentBrowser?.allowHostControl ?? globalBrowser?.allowHostControl ?? false,
-    autoStart: agentBrowser?.autoStart ?? globalBrowser?.autoStart ?? true,
+    enableNoVnc: false,
+    allowHostControl: false,
+    autoStart: false,
     autoStartTimeoutMs:
       agentBrowser?.autoStartTimeoutMs ??
       globalBrowser?.autoStartTimeoutMs ??

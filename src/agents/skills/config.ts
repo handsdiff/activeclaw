@@ -11,8 +11,8 @@ import { resolveSkillKey } from "./frontmatter.js";
 import type { SkillEligibilityContext, SkillEntry } from "./types.js";
 
 const DEFAULT_CONFIG_VALUES: Record<string, boolean> = {
-  "browser.enabled": true,
-  "browser.evaluateEnabled": true,
+  "browser.enabled": false,
+  "browser.evaluateEnabled": false,
 };
 
 export { hasBinary, resolveConfigPath, resolveRuntimePlatform };
