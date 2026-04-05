@@ -9,6 +9,8 @@ export type WsHubOptions = {
   onMessages: (messages: HubInboundMessage[]) => void | Promise<void>;
   onError?: (error: Error) => void;
   onConnected?: () => void;
+  fallbackAfterFailures?: number;
+  onFallbackToPoll?: (reason: string) => void | Promise<void>;
 };
 
 function httpToWs(url: string): string {
@@ -24,8 +26,19 @@ function computeReconnectDelay(attempt: number): number {
 }
 
 export async function connectHubWebSocket(opts: WsHubOptions): Promise<void> {
-  const { url, agentId, secret, abortSignal, onMessages, onError, onConnected } = opts;
+  const {
+    url,
+    agentId,
+    secret,
+    abortSignal,
+    onMessages,
+    onError,
+    onConnected,
+    fallbackAfterFailures = 3,
+    onFallbackToPoll,
+  } = opts;
   let attempt = 0;
+  let consecutiveFailures = 0;
 
   // Initial delay on first attempt to allow Hub server to start
   if (attempt === 0) {
@@ -37,13 +50,19 @@ export async function connectHubWebSocket(opts: WsHubOptions): Promise<void> {
   }
 
   while (!abortSignal?.aborted) {
+    let failureKind: "transport" | "auth" = "transport";
     try {
       const wsUrl = `${httpToWs(url)}/agents/${encodeURIComponent(agentId)}/ws`;
       console.error(`[HUB-WS-DEBUG] connecting to ${wsUrl}`);
       const ws = new WebSocket(wsUrl);
 
       await new Promise<void>((resolve, reject) => {
+        let authTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
         const cleanup = () => {
+          if (authTimer) {
+            clearTimeout(authTimer);
+            authTimer = undefined;
+          }
           ws.removeEventListener("open", onOpen);
           ws.removeEventListener("error", onErr);
           ws.removeEventListener("close", onClose);
@@ -52,6 +71,13 @@ export async function connectHubWebSocket(opts: WsHubOptions): Promise<void> {
 
         const onOpen = () => {
           ws.send(JSON.stringify({ secret }));
+          authTimer = globalThis.setTimeout(() => {
+            cleanup();
+            try {
+              ws.close();
+            } catch {}
+            reject(new Error("Hub auth timeout"));
+          }, 10_000);
         };
 
         const onErr = () => {
@@ -69,12 +95,18 @@ export async function connectHubWebSocket(opts: WsHubOptions): Promise<void> {
             const data = JSON.parse(String(ev.data));
 
             if (data.type === "auth" && data.ok) {
+              if (authTimer) {
+                clearTimeout(authTimer);
+                authTimer = undefined;
+              }
+              consecutiveFailures = 0;
               attempt = 0;
               onConnected?.();
               return;
             }
 
             if (!data.ok && data.error) {
+              failureKind = "auth";
               cleanup();
               reject(new Error(`Hub auth failed: ${data.error}`));
               return;
@@ -82,7 +114,8 @@ export async function connectHubWebSocket(opts: WsHubOptions): Promise<void> {
 
             if (data.type === "message" && data.data) {
               const msg: HubInboundMessage = {
-                messageId: data.data.messageId || `hub-${crypto.randomUUID()}`,
+                messageId:
+                  typeof data.data.messageId === "string" ? data.data.messageId.trim() : "",
                 from: data.data.from,
                 text: data.data.text,
                 timestamp:
@@ -126,10 +159,31 @@ export async function connectHubWebSocket(opts: WsHubOptions): Promise<void> {
     } catch (err) {
       if (abortSignal?.aborted) break;
       const error = err instanceof Error ? err : new Error(String(err));
+      if (error.message.startsWith("Hub auth failed:")) {
+        failureKind = "auth";
+      }
       onError?.(error);
     }
 
     if (abortSignal?.aborted) break;
+
+    if (failureKind !== "auth") {
+      consecutiveFailures++;
+    }
+
+    if (
+      failureKind !== "auth" &&
+      fallbackAfterFailures > 0 &&
+      consecutiveFailures >= fallbackAfterFailures &&
+      onFallbackToPoll
+    ) {
+      await onFallbackToPoll?.(
+        `ws transport failed ${consecutiveFailures} consecutive times; falling back to poll`,
+      );
+      consecutiveFailures = 0;
+      attempt = 0;
+    }
+
     const delay = computeReconnectDelay(attempt);
     attempt++;
     try {

@@ -26,6 +26,7 @@ export type PollHubOptions = {
   agentId: string;
   secret: string;
   pollTimeoutSec: number;
+  maxRuntimeMs?: number;
   abortSignal?: AbortSignal;
   onMessages: (messages: HubInboundMessage[]) => void | Promise<void>;
   onError?: (error: Error) => void;
@@ -42,12 +43,24 @@ function computeBackoff(attempt: number): number {
 }
 
 export async function pollHubMessages(opts: PollHubOptions): Promise<void> {
-  const { url, agentId, secret, pollTimeoutSec, abortSignal, onMessages, onError } = opts;
+  const { url, agentId, secret, pollTimeoutSec, maxRuntimeMs, abortSignal, onMessages, onError } =
+    opts;
   let attempt = 0;
+  const startedAt = Date.now();
+  const remainingBudgetMs = () =>
+    typeof maxRuntimeMs === "number" ? maxRuntimeMs - (Date.now() - startedAt) : null;
 
   while (!abortSignal?.aborted) {
+    const remainingMs = remainingBudgetMs();
+    if (remainingMs !== null && remainingMs <= 0) {
+      break;
+    }
     try {
-      const pollUrl = `${url}/agents/${encodeURIComponent(agentId)}/messages/poll?secret=${encodeURIComponent(secret)}&timeout=${pollTimeoutSec}`;
+      const boundedTimeoutSec =
+        remainingMs === null
+          ? pollTimeoutSec
+          : Math.max(1, Math.min(pollTimeoutSec, Math.ceil(remainingMs / 1000)));
+      const pollUrl = `${url}/agents/${encodeURIComponent(agentId)}/messages/poll?secret=${encodeURIComponent(secret)}&timeout=${boundedTimeoutSec}`;
       const { response, release } = await fetchWithSsrFGuard(
         buildTrustedHubFetchParams(pollUrl, abortSignal),
       );
@@ -71,9 +84,21 @@ export async function pollHubMessages(opts: PollHubOptions): Promise<void> {
       // to prevent tight-looping if server returns immediately.
       attempt = 0;
       const MIN_POLL_INTERVAL_MS = 5_000;
+      const postRequestBudgetMs = remainingBudgetMs();
+      if (postRequestBudgetMs !== null && postRequestBudgetMs <= 0) {
+        break;
+      }
+      const sleepMs =
+        postRequestBudgetMs === null
+          ? MIN_POLL_INTERVAL_MS
+          : Math.min(MIN_POLL_INTERVAL_MS, postRequestBudgetMs);
       try {
-        await setTimeout(MIN_POLL_INTERVAL_MS, undefined, { signal: abortSignal });
+        await setTimeout(sleepMs, undefined, { signal: abortSignal });
       } catch {
+        break;
+      }
+      const afterSleepBudgetMs = remainingBudgetMs();
+      if (afterSleepBudgetMs !== null && afterSleepBudgetMs <= 0) {
         break;
       }
     } catch (err) {
@@ -83,7 +108,14 @@ export async function pollHubMessages(opts: PollHubOptions): Promise<void> {
       const error = err instanceof Error ? err : new Error(String(err));
       onError?.(error);
 
-      const delay = computeBackoff(attempt);
+      const backoffBudgetMs = remainingBudgetMs();
+      if (backoffBudgetMs !== null && backoffBudgetMs <= 0) {
+        break;
+      }
+      const delay =
+        backoffBudgetMs === null
+          ? computeBackoff(attempt)
+          : Math.min(computeBackoff(attempt), backoffBudgetMs);
       attempt++;
       try {
         await setTimeout(delay, undefined, { signal: abortSignal });
