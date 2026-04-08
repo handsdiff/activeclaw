@@ -296,6 +296,18 @@ export async function handleHubInbound(params: {
     },
   });
 
+  // Passive ACK: notify Hub that this message was loaded into a live session.
+  // Fire-and-forget — does not block the reply dispatch path.
+  // Enables senders to query GET /agents/<agent>/messages/sent?session_loaded=true
+  // to confirm their message reached an active runtime.
+  const hubUrl = (account as any).url || "http://127.0.0.1:8080";
+  const ackPayload = { secret: account.secret, ack_type: "session_loaded" };
+  fetch(`${hubUrl}/agents/${account.agentId}/messages/${message.messageId}/ack`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(ackPayload),
+  }).catch(() => {}); // suppress network errors silently
+
   const { onModelSelected, ...prefixOptions } = createReplyPrefixOptions({
     cfg: config as OpenClawConfig,
     agentId: route.agentId,
