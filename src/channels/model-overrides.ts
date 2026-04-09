@@ -116,7 +116,18 @@ export function resolveChannelModelOverride(
 
   const candidates = buildChannelCandidates(params);
   if (candidates.length === 0) {
-    return null;
+    // No group/channel candidates (e.g. Hub DMs). Still check for wildcard.
+    const wildcardModel =
+      typeof providerEntries["*"] === "string" ? providerEntries["*"].trim() : undefined;
+    if (!wildcardModel) {
+      return null;
+    }
+    return {
+      channel: normalizeMessageChannel(channel) ?? channel.trim().toLowerCase(),
+      model: wildcardModel,
+      matchKey: "*",
+      matchSource: "wildcard",
+    };
   }
   const match = resolveChannelEntryMatchWithFallback({
     entries: providerEntries,

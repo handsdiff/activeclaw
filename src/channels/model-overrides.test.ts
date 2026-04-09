@@ -57,6 +57,22 @@ describe("resolveChannelModelOverride", () => {
       },
       expected: { model: "openai/gpt-4.1", matchKey: "123" },
     },
+    {
+      name: "falls back to wildcard when no group candidates exist (e.g. Hub DMs)",
+      input: {
+        cfg: {
+          channels: {
+            modelByChannel: {
+              hub: {
+                "*": "innies/claude-sonnet-4-6",
+              },
+            },
+          },
+        } as unknown as OpenClawConfig,
+        channel: "hub",
+      },
+      expected: { model: "innies/claude-sonnet-4-6", matchKey: "*" },
+    },
   ] as const;
 
   for (const testCase of cases) {
