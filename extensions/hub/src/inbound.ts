@@ -302,11 +302,14 @@ export async function handleHubInbound(params: {
   // to confirm their message reached an active runtime.
   const hubUrl = (account as any).url || "http://127.0.0.1:8080";
   const ackPayload = { secret: account.secret, ack_type: "session_loaded" };
+  console.log(
+    `[PASSIVE-ACK] message.messageId="${message.messageId}" account.agentId="${account.agentId}" hasSecret=${!!account.secret} hubUrl="${hubUrl}"`,
+  );
   fetch(`${hubUrl}/agents/${account.agentId}/messages/${message.messageId}/ack`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(ackPayload),
-  }).catch(() => {}); // suppress network errors silently
+  }).catch((e) => console.log(`[PASSIVE-ACK] fetch error: ${e}`)); // log errors not silent
 
   const { onModelSelected, ...prefixOptions } = createReplyPrefixOptions({
     cfg: config as OpenClawConfig,
