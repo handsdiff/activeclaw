@@ -300,7 +300,8 @@ export async function handleHubInbound(params: {
   // Fire-and-forget — does not block the reply dispatch path.
   // Enables senders to query GET /agents/<agent>/messages/sent?session_loaded=true
   // to confirm their message reached an active runtime.
-  const hubUrl = (account as any).url || "http://127.0.0.1:8080";
+  // Always use localhost — Hub is at :8080 inside the container; account.url is public
+  const hubUrl = "http://127.0.0.1:8080";
   const ackPayload = { secret: account.secret, ack_type: "session_loaded" };
   console.log(
     `[PASSIVE-ACK] message.messageId="${message.messageId}" account.agentId="${account.agentId}" hasSecret=${!!account.secret} hubUrl="${hubUrl}"`,
