@@ -13,10 +13,19 @@ export const ACPX_VERSION_ANY = "any";
 const ACPX_BIN_NAME = process.platform === "win32" ? "acpx.cmd" : "acpx";
 export const ACPX_PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const ACPX_BUNDLED_BIN = path.join(ACPX_PLUGIN_ROOT, "node_modules", ".bin", ACPX_BIN_NAME);
+const ACPX_MANAGED_INSTALL_DIR_NAME = "acpx";
 export function buildAcpxLocalInstallCommand(version: string = ACPX_PINNED_VERSION): string {
   return `npm install --omit=dev --no-save acpx@${version}`;
 }
 export const ACPX_LOCAL_INSTALL_COMMAND = buildAcpxLocalInstallCommand();
+
+export function resolveManagedAcpxInstallRoot(stateDir: string): string {
+  return path.join(path.resolve(stateDir), ACPX_MANAGED_INSTALL_DIR_NAME);
+}
+
+export function resolveManagedAcpxBin(installRoot: string): string {
+  return path.join(installRoot, "node_modules", ".bin", ACPX_BIN_NAME);
+}
 
 export type McpServerConfig = {
   command: string;
@@ -35,6 +44,7 @@ export type AcpxPluginConfig = {
   command?: string;
   expectedVersion?: string;
   cwd?: string;
+  stateDir?: string;
   permissionMode?: AcpxPermissionMode;
   nonInteractivePermissions?: AcpxNonInteractivePermissionPolicy;
   strictWindowsCmdWrapper?: boolean;
@@ -50,6 +60,8 @@ export type ResolvedAcpxPluginConfig = {
   stripProviderAuthEnvVars: boolean;
   installCommand: string;
   cwd: string;
+  stateDir: string;
+  installRoot: string;
   permissionMode: AcpxPermissionMode;
   nonInteractivePermissions: AcpxNonInteractivePermissionPolicy;
   strictWindowsCmdWrapper: boolean;
@@ -122,6 +134,7 @@ function parseAcpxPluginConfig(value: unknown): ParseResult {
     "command",
     "expectedVersion",
     "cwd",
+    "stateDir",
     "permissionMode",
     "nonInteractivePermissions",
     "strictWindowsCmdWrapper",
@@ -151,6 +164,11 @@ function parseAcpxPluginConfig(value: unknown): ParseResult {
   const cwd = value.cwd;
   if (cwd !== undefined && (typeof cwd !== "string" || cwd.trim() === "")) {
     return { ok: false, message: "cwd must be a non-empty string" };
+  }
+
+  const stateDir = value.stateDir;
+  if (stateDir !== undefined && (typeof stateDir !== "string" || stateDir.trim() === "")) {
+    return { ok: false, message: "stateDir must be a non-empty string" };
   }
 
   const permissionMode = value.permissionMode;
@@ -220,6 +238,7 @@ function parseAcpxPluginConfig(value: unknown): ParseResult {
       command: typeof command === "string" ? command.trim() : undefined,
       expectedVersion: typeof expectedVersion === "string" ? expectedVersion.trim() : undefined,
       cwd: typeof cwd === "string" ? cwd.trim() : undefined,
+      stateDir: typeof stateDir === "string" ? stateDir.trim() : undefined,
       permissionMode: typeof permissionMode === "string" ? permissionMode : undefined,
       nonInteractivePermissions:
         typeof nonInteractivePermissions === "string" ? nonInteractivePermissions : undefined,
@@ -233,10 +252,14 @@ function parseAcpxPluginConfig(value: unknown): ParseResult {
   };
 }
 
-function resolveConfiguredCommand(params: { configured?: string; workspaceDir?: string }): string {
+function resolveConfiguredCommand(params: {
+  configured?: string;
+  workspaceDir?: string;
+  defaultCommand: string;
+}): string {
   const configured = params.configured?.trim();
   if (!configured) {
-    return ACPX_BUNDLED_BIN;
+    return params.defaultCommand;
   }
   if (path.isAbsolute(configured) || configured.includes(path.sep) || configured.includes("/")) {
     const baseDir = params.workspaceDir?.trim() || process.cwd();
@@ -271,6 +294,7 @@ export function createAcpxPluginConfigSchema(): OpenClawPluginConfigSchema {
         command: { type: "string" },
         expectedVersion: { type: "string" },
         cwd: { type: "string" },
+        stateDir: { type: "string" },
         permissionMode: {
           type: "string",
           enum: [...ACPX_PERMISSION_MODES],
@@ -320,6 +344,7 @@ export function toAcpMcpServers(mcpServers: Record<string, McpServerConfig>): Ac
 export function resolveAcpxPluginConfig(params: {
   rawConfig: unknown;
   workspaceDir?: string;
+  stateDir?: string;
 }): ResolvedAcpxPluginConfig {
   const parsed = parseAcpxPluginConfig(params.rawConfig);
   if (!parsed.ok) {
@@ -328,12 +353,18 @@ export function resolveAcpxPluginConfig(params: {
   const normalized = parsed.value ?? {};
   const fallbackCwd = params.workspaceDir?.trim() || process.cwd();
   const cwd = path.resolve(normalized.cwd?.trim() || fallbackCwd);
+  const stateDir = path.resolve(
+    normalized.stateDir?.trim() || params.stateDir?.trim() || path.join(fallbackCwd, "state"),
+  );
+  const installRoot = resolveManagedAcpxInstallRoot(stateDir);
+  const configuredCommand = normalized.command?.trim();
   const command = resolveConfiguredCommand({
-    configured: normalized.command,
+    configured: configuredCommand,
     workspaceDir: params.workspaceDir,
+    defaultCommand: resolveManagedAcpxBin(installRoot),
   });
-  const allowPluginLocalInstall = command === ACPX_BUNDLED_BIN;
-  const stripProviderAuthEnvVars = command === ACPX_BUNDLED_BIN;
+  const allowPluginLocalInstall = !configuredCommand;
+  const stripProviderAuthEnvVars = !configuredCommand;
   const configuredExpectedVersion = normalized.expectedVersion;
   const expectedVersion =
     configuredExpectedVersion === ACPX_VERSION_ANY
@@ -348,6 +379,8 @@ export function resolveAcpxPluginConfig(params: {
     stripProviderAuthEnvVars,
     installCommand,
     cwd,
+    stateDir,
+    installRoot,
     permissionMode: normalized.permissionMode ?? DEFAULT_PERMISSION_MODE,
     nonInteractivePermissions:
       normalized.nonInteractivePermissions ?? DEFAULT_NON_INTERACTIVE_POLICY,

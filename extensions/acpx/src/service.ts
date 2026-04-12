@@ -44,6 +44,7 @@ export function createAcpxRuntimeService(
       const pluginConfig = resolveAcpxPluginConfig({
         rawConfig: params.pluginConfig,
         workspaceDir: ctx.workspaceDir,
+        stateDir: ctx.stateDir,
       });
       const runtimeFactory = params.runtimeFactory ?? createDefaultRuntime;
       runtime = runtimeFactory({
@@ -70,6 +71,7 @@ export function createAcpxRuntimeService(
           await ensureAcpx({
             command: pluginConfig.command,
             logger: ctx.logger,
+            installRoot: pluginConfig.installRoot,
             expectedVersion: pluginConfig.expectedVersion,
             allowInstall: pluginConfig.allowPluginLocalInstall,
             stripProviderAuthEnvVars: pluginConfig.stripProviderAuthEnvVars,

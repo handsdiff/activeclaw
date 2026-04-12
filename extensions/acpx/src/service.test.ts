@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { AcpRuntime, OpenClawPluginServiceContext } from "openclaw/plugin-sdk/acpx";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AcpRuntimeError } from "../../../src/acp/runtime/errors.js";
@@ -6,7 +7,7 @@ import {
   getAcpRuntimeBackend,
   requireAcpRuntimeBackend,
 } from "../../../src/acp/runtime/registry.js";
-import { ACPX_BUNDLED_BIN, ACPX_PINNED_VERSION } from "./config.js";
+import { ACPX_PINNED_VERSION } from "./config.js";
 import { createAcpxRuntimeService } from "./service.js";
 
 const { ensureAcpxSpy } = vi.hoisted(() => ({
@@ -101,6 +102,37 @@ describe("createAcpxRuntimeService", () => {
     expect(getAcpRuntimeBackend("acpx")).toBeNull();
   });
 
+  it("uses the plugin service stateDir for the managed acpx install root", async () => {
+    const { runtime } = createRuntimeStub(true);
+    const runtimeFactory = vi.fn(() => runtime);
+    const service = createAcpxRuntimeService({
+      runtimeFactory,
+    });
+    const context = createServiceContext({
+      stateDir: "/tmp/plugin-state",
+    });
+
+    await service.start(context);
+
+    expect(runtimeFactory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pluginConfig: expect.objectContaining({
+          command: "/tmp/plugin-state/acpx/node_modules/.bin/acpx",
+          stateDir: "/tmp/plugin-state",
+          installRoot: "/tmp/plugin-state/acpx",
+        }),
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(ensureAcpxSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          installRoot: "/tmp/plugin-state/acpx",
+        }),
+      );
+    });
+  });
+
   it("marks backend unavailable when runtime health check fails", async () => {
     const { runtime } = createRuntimeStub(false);
     const service = createAcpxRuntimeService({
@@ -136,7 +168,7 @@ describe("createAcpxRuntimeService", () => {
       expect.objectContaining({
         queueOwnerTtlSeconds: 0.25,
         pluginConfig: expect.objectContaining({
-          command: ACPX_BUNDLED_BIN,
+          command: path.join("/tmp/state", "acpx", "node_modules", ".bin", "acpx"),
           expectedVersion: ACPX_PINNED_VERSION,
           allowPluginLocalInstall: true,
         }),

@@ -16,6 +16,9 @@
       "cwd": {
         "type": "string"
       },
+      "stateDir": {
+        "type": "string"
+      },
       "permissionMode": {
         "type": "string",
         "enum": ["approve-all", "approve-reads", "deny-all"]
@@ -63,7 +66,7 @@
   "uiHints": {
     "command": {
       "label": "acpx Command",
-      "help": "Optional path/command override for acpx (for example /home/user/repos/acpx/dist/cli.js). Leave unset to use plugin-local bundled acpx."
+      "help": "Optional path/command override for acpx (for example /home/user/repos/acpx/dist/cli.js). Leave unset to use the managed acpx binary under the plugin state directory."
     },
     "expectedVersion": {
       "label": "Expected acpx Version",
@@ -72,6 +75,10 @@
     "cwd": {
       "label": "Default Working Directory",
       "help": "Default cwd for ACP session operations when not set per session."
+    },
+    "stateDir": {
+      "label": "State Directory",
+      "help": "Writable plugin state directory used for managed acpx installs and repair by default."
     },
     "permissionMode": {
       "label": "Permission Mode",

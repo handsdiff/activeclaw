@@ -1,26 +1,30 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  ACPX_BUNDLED_BIN,
   ACPX_PINNED_VERSION,
   createAcpxPluginConfigSchema,
   resolveAcpxPluginConfig,
 } from "./config.js";
 
 describe("acpx plugin config parsing", () => {
-  it("resolves bundled acpx with pinned version by default", () => {
+  it("uses the plugin state dir for the default managed acpx install", () => {
     const resolved = resolveAcpxPluginConfig({
       rawConfig: {
         cwd: "/tmp/workspace",
       },
       workspaceDir: "/tmp/workspace",
+      stateDir: "/tmp/plugin-state",
     });
 
-    expect(resolved.command).toBe(ACPX_BUNDLED_BIN);
+    expect(resolved.command).toBe(
+      path.join(path.resolve("/tmp/plugin-state"), "acpx", "node_modules", ".bin", "acpx"),
+    );
     expect(resolved.expectedVersion).toBe(ACPX_PINNED_VERSION);
     expect(resolved.allowPluginLocalInstall).toBe(true);
     expect(resolved.stripProviderAuthEnvVars).toBe(true);
     expect(resolved.cwd).toBe(path.resolve("/tmp/workspace"));
+    expect(resolved.stateDir).toBe(path.resolve("/tmp/plugin-state"));
+    expect(resolved.installRoot).toBe(path.join(path.resolve("/tmp/plugin-state"), "acpx"));
     expect(resolved.strictWindowsCmdWrapper).toBe(true);
   });
 

@@ -94,7 +94,7 @@ Required behavior when ACP backend is unavailable:
 
 1. Do not immediately ask the user to pick an alternate path.
 2. First attempt automatic local repair:
-   - ensure plugin-local pinned acpx is installed in `extensions/acpx`
+   - in a repo checkout, repair ACPX with the workspace package manager instead of writing into `extensions/acpx` directly
    - verify `${ACPX_CMD} --version`
 3. After reinstall/repair, restart the gateway and explicitly offer to run that restart for the user.
 4. Retry ACP thread spawn once after repair.
@@ -111,21 +111,21 @@ Do not default to subagent runtime for these requests.
 
 For this repo, direct `acpx` calls must follow the same pinned policy as the `@openclaw/acpx` extension.
 
-1. Prefer plugin-local binary, not global PATH:
-   - `./extensions/acpx/node_modules/.bin/acpx`
+1. Prefer the workspace-managed ACPX command, not global PATH:
+   - `corepack pnpm --filter ./extensions/acpx exec acpx`
 2. Resolve pinned version from extension dependency:
    - `node -e "console.log(require('./extensions/acpx/package.json').dependencies.acpx)"`
-3. If binary is missing or version mismatched, install plugin-local pinned version:
-   - `cd extensions/acpx && npm install --omit=dev --no-save acpx@<pinnedVersion>`
+3. If the command is missing or version mismatched in a repo checkout, repair the workspace package:
+   - `corepack pnpm install --filter ./extensions/acpx`
 4. Verify before use:
-   - `./extensions/acpx/node_modules/.bin/acpx --version`
+   - `corepack pnpm --filter ./extensions/acpx exec acpx --version`
 5. If install/repair changed ACPX artifacts, restart the gateway and offer to run the restart.
 6. Do not run `npm install -g acpx` unless the user explicitly asks for global install.
 
 Set and reuse:
 
 ```bash
-ACPX_CMD="./extensions/acpx/node_modules/.bin/acpx"
+ACPX_CMD="corepack pnpm --filter ./extensions/acpx exec acpx"
 ```
 
 ## Direct acpx path ("telephone game")
@@ -202,7 +202,7 @@ If `~/.acpx/config.json` overrides `agents`, those overrides replace defaults.
 ### Failure handling
 
 - `acpx: command not found`:
-  - for thread-spawn ACP requests, install plugin-local pinned acpx in `extensions/acpx` immediately
+  - for thread-spawn ACP requests in a repo checkout, repair ACPX with `corepack pnpm install --filter ./extensions/acpx`
   - restart gateway after install and offer to run the restart automatically
   - then retry once
   - do not ask for install permission first unless policy explicitly requires it

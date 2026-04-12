@@ -197,6 +197,7 @@ let pendingEnsure: Promise<void> | null = null;
 export async function ensureAcpx(params: {
   command: string;
   logger?: PluginLogger;
+  installRoot?: string;
   pluginRoot?: string;
   expectedVersion?: string;
   allowInstall?: boolean;
@@ -208,7 +209,7 @@ export async function ensureAcpx(params: {
   }
 
   pendingEnsure = (async () => {
-    const pluginRoot = params.pluginRoot ?? ACPX_PLUGIN_ROOT;
+    const pluginRoot = params.installRoot ?? params.pluginRoot ?? ACPX_PLUGIN_ROOT;
     const expectedVersion = params.expectedVersion?.trim() || undefined;
     const installVersion = expectedVersion ?? ACPX_PINNED_VERSION;
     const allowInstall = params.allowInstall ?? true;
@@ -230,6 +231,8 @@ export async function ensureAcpx(params: {
     params.logger?.warn(
       `acpx local binary unavailable or mismatched (${precheck.message}); running plugin-local install`,
     );
+
+    fs.mkdirSync(pluginRoot, { recursive: true });
 
     const install = await spawnAndCollect({
       command: "npm",
